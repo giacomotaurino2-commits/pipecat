@@ -67,14 +67,12 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # VAD BLINDATO: Standard Pipecat (0.2s) ma con min_volume a 0.5.
-    # Questo significa che ignorerà TOTALMENTE respiri, fruscii di linea e rumori di fondo.
-    # Ascolterà solo quando parli con un tono di voce chiaro.
+    # VAD CORRETTO: Eliminato il blocco del volume. L'AI ascolterà la tua voce 
+    # in modo naturale tramite il riconoscimento neurale (confidence).
     silero_vad = SileroVADAnalyzer(params=VADParams(
         confidence=0.75,     
         start_secs=0.2,      
-        stop_secs=0.2,       
-        min_volume=0.5       
+        stop_secs=0.2
     ))
 
     transport = FastAPIWebsocketTransport(
@@ -94,7 +92,6 @@ async def run_bot(websocket: WebSocket):
         ),
     )
 
-    # Deepgram ottimizzato in italiano
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         model="nova-2",
@@ -107,8 +104,6 @@ async def run_bot(websocket: WebSocket):
         language="it"
     )
     
-    # LLM impostato su gpt-4o: L'intelligenza massima disponibile per la latenza in tempo reale.
-    # Temperature 0.3: Abbastanza basso da non fargli inventare nulla, ma con un pizzico di naturalezza.
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
@@ -117,15 +112,14 @@ async def run_bot(websocket: WebSocket):
         )
     )
 
-    # PROMPT AVANZATO: Istruzioni di ferro per prevenire divagazioni e stupidità.
     system_prompt = """SEI L'ASSISTENTE VOCALE UFFICIALE DI ROJAK, una software house d'avanguardia. 
     Il tuo compito è rispondere al telefono in modo brillante, professionale ed estremamente rapido.
     
     REGOLE TASSATIVE (VIOLARLE È PROIBITO):
     1. ZERO FORMATTAZIONE: Non usare mai asterischi, cancelletti, markdown o liste. Scrivi tutto come se fosse un copione da leggere a voce.
     2. BREVITÀ ESTREMA: Le tue risposte devono essere di una o due frasi al massimo. Sii conciso.
-    3. NO ALLUCINAZIONI: Se l'utente fa una domanda a cui non sai rispondere, o se capisci una frase senza senso (es. un fruscio), di' semplicemente: "Mi scusi, non ho sentito bene. Può ripetere?".
-    4. IL TUO OBIETTIVO: L'unico tuo scopo è fissare una "Discovery Call" (una chiamata conoscitiva) di 15 minuti con un esperto del team.
+    3. NO ALLUCINAZIONI: Se l'utente fa una domanda a cui non sai rispondere, di' semplicemente: "Mi scusi, non ho sentito bene. Può ripetere?".
+    4. IL TUO OBIETTIVO: L'unico tuo scopo è fissare una Discovery Call di 15 minuti con un esperto del team.
     
     CONOSCENZA DI ROJAK: 
     - Sviluppiamo soluzioni AI (agenti intelligenti), CRM su misura e Software Custom.
@@ -134,11 +128,12 @@ async def run_bot(websocket: WebSocket):
     STRUTTURA DELLA TUA RISPOSTA:
     Rispondi sempre direttamente alla domanda e chiudi immediatamente con una domanda per spingere verso la prenotazione (es. "Vuole che le fissi una chiamata con un nostro esperto?")."""
 
+    # Inseriamo il saluto iniziale nella memoria dell'AI
+    greeting = "Buongiorno, grazie per aver chiamato Rojak! Sono l'assistente digitale del team. Come posso aiutarla oggi?"
+    
     messages = [
-        {
-            "role": "system",
-            "content": os.getenv("SYSTEM_PROMPT", system_prompt),
-        }
+        {"role": "system", "content": os.getenv("SYSTEM_PROMPT", system_prompt)},
+        {"role": "assistant", "content": greeting}
     ]
     
     context = LLMContext(messages)
@@ -159,7 +154,7 @@ async def run_bot(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
         logger.info("Bot connesso")
-        await task.queue_frames([TextFrame("Buongiorno, grazie per aver chiamato Rojak! Sono l'assistente digitale del team. Come posso aiutarla oggi?")])
+        await task.queue_frames([TextFrame(greeting)])
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport, client):
