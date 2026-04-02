@@ -67,9 +67,7 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # VAD PERFETTO: 
-    # stop_secs a 0.2 (OBBLIGATORIO per non far crashare Pipecat e avere latenza zero)
-    # min_volume a 0.1 (OBBLIGATORIO per tagliare il fruscio di linea e non aspettare 30 secondi)
+    # VAD OTTIMIZZATO PER LATENZA ZERO
     silero_vad = SileroVADAnalyzer(params=VADParams(
         confidence=0.5,     
         start_secs=0.2,      
@@ -107,10 +105,11 @@ async def run_bot(websocket: WebSocket):
         )
     )
     
+    # MOTORE AGGIORNATO AL MODELLO PIÙ AVANZATO
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
-            model="gpt-4o",
+            model="gpt-5.4",
             temperature=0.5, 
         )
     )
@@ -147,7 +146,6 @@ async def run_bot(websocket: WebSocket):
         assistant_aggregator,
     ])
 
-    # Interruzioni disattivate: il bot terminerà sempre le sue frasi
     task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=False))
 
     @transport.event_handler("on_client_connected")
