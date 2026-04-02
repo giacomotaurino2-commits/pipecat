@@ -1,4 +1,4 @@
-pipecat-ai[daily,deepgram,cartesia,openai]==0.0.108
+pipecat-ai[twilio,deepgram,cartesia,openai]==0.0.108
 aiohttp
 uvicorn
 fastapi
