@@ -67,8 +67,9 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # VAD OTTIMIZZATO: min_volume a 0.1 taglia il rumore di fondo della linea.
-    # stop_secs a 0.5 chiude il microfono non appena fai una vera pausa.
+    # VAD OTTIMIZZATO (NIENTE PIU' RITARDI): 
+    # min_volume=0.1 blocca il fruscio continuo (la vera causa dei 30 secondi).
+    # stop_secs=0.5 permette pause naturali ma taglia e invia la frase appena hai finito.
     silero_vad = SileroVADAnalyzer(params=VADParams(
         confidence=0.5,     
         start_secs=0.2,      
@@ -92,16 +93,11 @@ async def run_bot(websocket: WebSocket):
         ),
     )
 
-    # DEEPGRAM TURBO: Con l'endpointing a 500, Deepgram non aspetterà più 30 secondi.
-    # Appena smetti di parlare, invia tutto a GPT in una frazione di secondo.
+    # RIMOSSO IL PARAMETRO CHE MANDAVA IN CRASH IL SERVER
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         model="nova-2",
-        language="it",
-        live_options={
-            "endpointing": 500,
-            "smart_format": True
-        }
+        language="it"
     )
     
     tts = CartesiaTTSService(
@@ -152,7 +148,7 @@ async def run_bot(websocket: WebSocket):
         assistant_aggregator,
     ])
 
-    # Interruzioni bloccate come avevi chiesto, così non si stoppa a metà frase
+    # Interruzioni disattivate: il bot terminerà sempre le sue frasi senza bloccarsi.
     task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=False))
 
     @transport.event_handler("on_client_connected")
