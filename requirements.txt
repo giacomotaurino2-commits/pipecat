@@ -1,2 +1,6 @@
 pipecat-ai[daily,deepgram,cartesia,openai]==0.0.108
 aiohttp
+uvicorn
+fastapi
+python-dotenv
+loguru
