@@ -1,8 +1,7 @@
-fastapi==0.111.0
-uvicorn==0.30.1
-python-dotenv==1.0.1
-loguru==0.7.2
-pipecat-ai[openai,twilio,silero]==0.0.45
-websockets==12.0
-aiohttp==3.9.5
-pydantic==2.7.4
+fastapi
+uvicorn
+python-dotenv
+loguru
+pipecat-ai[openai,twilio,silero]
+websockets
+aiohttp
