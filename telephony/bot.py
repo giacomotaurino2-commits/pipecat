@@ -121,7 +121,8 @@ async def run_bot(websocket: WebSocket):
         context_aggregator.assistant(),
     ])
 
-task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
+    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
+
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
         logger.info("Bot connesso, invio messaggio di benvenuto")
