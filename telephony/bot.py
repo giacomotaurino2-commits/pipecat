@@ -89,12 +89,17 @@ async def run_bot(websocket: WebSocket):
         ),
     )
 
-    stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+    # Deepgram configurato in ITALIANO
+    stt = DeepgramSTTService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        language="it"
+    )
     
-    # Cartesia con la voce di Lorenzo
+    # Cartesia con la voce di Lorenzo configurato in ITALIANO
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
         voice_id="ee16f140-f6dc-490e-a1ed-c1d537ea0086",
+        language="it"
     )
     
     # OpenAI aggiornato a GPT-5.1
