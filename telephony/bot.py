@@ -1,7 +1,8 @@
 import asyncio
 import os
 import sys
-from pipecat.transports.services.daily import DailyParams, DailyTransport
+
+from pipecat.transports.services.daily import DailyParams, DailyTransport, DailyRestHelper
 from pipecat.services.openai import OpenAILLMService
 from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService
@@ -9,7 +10,6 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.transports.network.helpers import DailyRestHelper
 
 from loguru import logger
 from dotenv import load_dotenv
@@ -40,12 +40,12 @@ async def main():
         stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
         tts = CartesiaTTSService(
             api_key=os.getenv("CARTESIA_API_KEY"),
-            voice_id="79a125e8-cd45-4c13-8a67-2756221880dd", # Voce British (puoi cambiarla)
+            voice_id="79a125e8-cd45-4c13-8a67-2756221880dd",
         )
         llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
 
         messages = [
-            {"role": "system", "content": os.getenv("SYSTEM_PROMPT", "Ciao! Sono il tuo assistente AI.")},
+            {"role": "system", "content": os.getenv("SYSTEM_PROMPT", "Ciao! Sono l'assistente AI di Giacomo. Rispondo in modo conciso e naturale.")},
         ]
         context = OpenAILLMContext(messages)
         context_aggregator = llm.create_context_aggregator(context)
