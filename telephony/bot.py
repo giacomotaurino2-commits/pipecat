@@ -67,12 +67,13 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # VAD CORRETTO: Eliminato il blocco del volume. L'AI ascolterà la tua voce 
-    # in modo naturale tramite il riconoscimento neurale (confidence).
+    # IL FIX DEL SECOLO: min_volume a 0.0. L'audio ora passa sempre al 100%.
+    # Confidence a 0.4 permette di riconoscere la tua voce in modo infallibile.
     silero_vad = SileroVADAnalyzer(params=VADParams(
-        confidence=0.75,     
+        confidence=0.4,     
         start_secs=0.2,      
-        stop_secs=0.2
+        stop_secs=0.2,
+        min_volume=0.0       
     ))
 
     transport = FastAPIWebsocketTransport(
@@ -82,7 +83,6 @@ async def run_bot(websocket: WebSocket):
             audio_out_enabled=True,
             add_wav_header=False,
             vad_analyzer=silero_vad,
-            vad_audio_passthrough=True,
             serializer=TwilioFrameSerializer(
                 stream_sid=stream_sid,
                 call_sid=call_sid,
@@ -98,12 +98,16 @@ async def run_bot(websocket: WebSocket):
         language="it"
     )
     
+    # Aggiornato con i Settings moderni per sbloccare la fluidità
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
-        voice_id="ee16f140-f6dc-490e-a1ed-c1d537ea0086",
-        language="it"
+        settings=CartesiaTTSService.Settings(
+            voice="ee16f140-f6dc-490e-a1ed-c1d537ea0086",
+            language="it"
+        )
     )
     
+    # OpenAI aggiornato con i Settings moderni
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
@@ -112,24 +116,22 @@ async def run_bot(websocket: WebSocket):
         )
     )
 
-    system_prompt = """SEI L'ASSISTENTE VOCALE UFFICIALE DI ROJAK, una software house d'avanguardia. 
-    Il tuo compito è rispondere al telefono in modo brillante, professionale ed estremamente rapido.
+    # Prompt ottimizzato per azzerare le balbuzie (vietate le virgole)
+    system_prompt = """SEI L'ASSISTENTE VOCALE UFFICIALE DI ROJAK, una software house d'avanguardia.
     
     REGOLE TASSATIVE (VIOLARLE È PROIBITO):
-    1. ZERO FORMATTAZIONE: Non usare mai asterischi, cancelletti, markdown o liste. Scrivi tutto come se fosse un copione da leggere a voce.
-    2. BREVITÀ ESTREMA: Le tue risposte devono essere di una o due frasi al massimo. Sii conciso.
-    3. NO ALLUCINAZIONI: Se l'utente fa una domanda a cui non sai rispondere, di' semplicemente: "Mi scusi, non ho sentito bene. Può ripetere?".
-    4. IL TUO OBIETTIVO: L'unico tuo scopo è fissare una Discovery Call di 15 minuti con un esperto del team.
+    1. PARLA IN MODO FLUIDO: Non usare MAI le virgole, i due punti o elenchi. Scrivi solo frasi brevi che finiscono con un punto fermo.
+    2. BREVITÀ ESTREMA: Le tue risposte devono essere di massimo due frasi. Sii conciso.
+    3. NO ALLUCINAZIONI: Se l'utente fa una domanda a cui non sai rispondere o non capisci, di' solo: "Mi scusi non ho sentito bene. Può ripetere?".
+    4. IL TUO OBIETTIVO: Fissare una Discovery Call di 15 minuti.
     
     CONOSCENZA DI ROJAK: 
-    - Sviluppiamo soluzioni AI (agenti intelligenti), CRM su misura e Software Custom.
+    - Sviluppiamo soluzioni AI e CRM su misura.
     - I prezzi sono personalizzati e vengono discussi solo in call.
     
-    STRUTTURA DELLA TUA RISPOSTA:
-    Rispondi sempre direttamente alla domanda e chiudi immediatamente con una domanda per spingere verso la prenotazione (es. "Vuole che le fissi una chiamata con un nostro esperto?")."""
+    Chiudi sempre con una domanda diretta per spingere verso la prenotazione."""
 
-    # Inseriamo il saluto iniziale nella memoria dell'AI
-    greeting = "Buongiorno, grazie per aver chiamato Rojak! Sono l'assistente digitale del team. Come posso aiutarla oggi?"
+    greeting = "Buongiorno, grazie per aver chiamato Rojak. Sono l'assistente digitale del team. Come posso aiutarla oggi?"
     
     messages = [
         {"role": "system", "content": os.getenv("SYSTEM_PROMPT", system_prompt)},
