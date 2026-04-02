@@ -67,13 +67,12 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # IL FIX DEL SECOLO: min_volume a 0.0. L'audio ora passa sempre al 100%.
-    # Confidence a 0.4 permette di riconoscere la tua voce in modo infallibile.
+    # VAD BILANCIATO PER LA TELEFONIA: Ignora fruscii, sente la voce chiara.
     silero_vad = SileroVADAnalyzer(params=VADParams(
-        confidence=0.4,     
+        confidence=0.6,     
         start_secs=0.2,      
         stop_secs=0.2,
-        min_volume=0.0       
+        min_volume=0.15       
     ))
 
     transport = FastAPIWebsocketTransport(
@@ -98,7 +97,6 @@ async def run_bot(websocket: WebSocket):
         language="it"
     )
     
-    # Aggiornato con i Settings moderni per sbloccare la fluidità
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
         settings=CartesiaTTSService.Settings(
@@ -107,31 +105,29 @@ async def run_bot(websocket: WebSocket):
         )
     )
     
-    # OpenAI aggiornato con i Settings moderni
+    # CERVELLO SBLOCCATO: Temperature a 0.5 per un mix perfetto di logica, intelligenza e naturalezza.
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
             model="gpt-4o",
-            temperature=0.3, 
+            temperature=0.5, 
         )
     )
 
-    # Prompt ottimizzato per azzerare le balbuzie (vietate le virgole)
-    system_prompt = """SEI L'ASSISTENTE VOCALE UFFICIALE DI ROJAK, una software house d'avanguardia.
+    # PROMPT INTELLIGENTE: Ora è un consulente vero, non un robot con un copione.
+    system_prompt = """SEI L'ASSISTENTE VOCALE E CONSULENTE TECNOLOGICO DI ROJAK, una software house d'avanguardia.
+    Sei dotato di un'intelligenza brillante e puoi rispondere a qualsiasi domanda tecnologica, di business o sui nostri servizi. Non sei un robot limitato a un copione.
     
-    REGOLE TASSATIVE (VIOLARLE È PROIBITO):
-    1. PARLA IN MODO FLUIDO: Non usare MAI le virgole, i due punti o elenchi. Scrivi solo frasi brevi che finiscono con un punto fermo.
-    2. BREVITÀ ESTREMA: Le tue risposte devono essere di massimo due frasi. Sii conciso.
-    3. NO ALLUCINAZIONI: Se l'utente fa una domanda a cui non sai rispondere o non capisci, di' solo: "Mi scusi non ho sentito bene. Può ripetere?".
-    4. IL TUO OBIETTIVO: Fissare una Discovery Call di 15 minuti.
+    REGOLE DI CONVERSAZIONE:
+    1. NATURALEZZA: Parla in modo sciolto, naturale e professionale. Rispondi con competenza a qualsiasi dubbio del cliente. NON usare MAI asterischi, cancelletti o elenchi puntati.
+    2. BREVITÀ INTELLIGENTE: Sii discorsivo ma conciso. Cerca di mantenere le risposte entro 2 o 3 frasi logiche.
+    3. GESTIONE DELL'IMPREVISTO: Se l'utente ti chiede cose fuori contesto, filosofiche o complesse, usa la tua intelligenza per dare una risposta sensata, poi riporta elegantemente il discorso su come Rojak può aiutarli.
+    4. OBIETTIVO FINALE: Il tuo scopo ultimo è capire le esigenze del cliente e fissare una Discovery Call di 15 minuti con un nostro esperto.
     
-    CONOSCENZA DI ROJAK: 
-    - Sviluppiamo soluzioni AI e CRM su misura.
-    - I prezzi sono personalizzati e vengono discussi solo in call.
-    
-    Chiudi sempre con una domanda diretta per spingere verso la prenotazione."""
+    CHI SIAMO:
+    Rojak sviluppa soluzioni AI avanzate, agenti intelligenti, CRM su misura e software custom per trasformare le aziende. I prezzi sono personalizzati."""
 
-    greeting = "Buongiorno, grazie per aver chiamato Rojak. Sono l'assistente digitale del team. Come posso aiutarla oggi?"
+    greeting = "Buongiorno, grazie per aver chiamato Rojak. Sono l'assistente digitale del team, come posso aiutarla oggi?"
     
     messages = [
         {"role": "system", "content": os.getenv("SYSTEM_PROMPT", system_prompt)},
