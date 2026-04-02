@@ -53,7 +53,7 @@ async def create_daily_room() -> dict:
             json={
                 "properties": {
                     "max_participants": 2,
-                    "exp": 3600,  # room scade dopo 1 ora
+                    "exp": int(time.time()) + 3600,
                     "enable_chat": False,
                     "enable_prejoin_ui": False,
                 }
