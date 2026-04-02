@@ -2,9 +2,7 @@ import asyncio
 import os
 import sys
 
-# Nuovi percorsi per la versione 0.0.108
-from pipecat.transports.daily.transport import DailyTransport, DailyParams
-from pipecat.transports.services.daily import DailyRestHelper
+from pipecat.transports.services.daily import DailyParams, DailyTransport, DailyRestHelper
 from pipecat.services.openai import OpenAILLMService
 from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService
@@ -18,14 +16,14 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 async def main():
-    # Prendi la porta dalle variabili di Railway
+    # Railway assegna la porta automaticamente
     port = int(os.getenv("PORT", 8080))
     
     async with DailyRestHelper(
         os.getenv("DAILY_API_KEY"),
         os.getenv("DAILY_API_URL", "https://api.daily.co/v1")
     ) as rest_helper:
-        # Crea la stanza Daily
+        # Crea la stanza per la chiamata
         room = await rest_helper.create_room()
         
         transport = DailyTransport(
@@ -47,7 +45,7 @@ async def main():
         llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
 
         messages = [
-            {"role": "system", "content": os.getenv("SYSTEM_PROMPT", "Ciao! Sono l'assistente AI di Giacomo. Rispondo in modo conciso e naturale.")},
+            {"role": "system", "content": os.getenv("SYSTEM_PROMPT", "Ciao! Sono l'assistente AI di Giacomo. Parlo in modo naturale e conciso.")},
         ]
         context = OpenAILLMContext(messages)
         context_aggregator = llm.create_context_aggregator(context)
