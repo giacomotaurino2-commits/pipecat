@@ -1,0 +1,3 @@
+pipecat-ai[openai,deepgram,cartesia,daily,twilio]
+loguru
+python-dotenv
