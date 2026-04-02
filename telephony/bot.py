@@ -64,12 +64,7 @@ async def run_bot(websocket: WebSocket):
             call_sid = msg["start"]["callSid"]
             break
 
-    if not stream_sid:
-        return
-
     # LO SCUDO ANTI-RUMORE CON RISPOSTA IMMEDIATA
-    # confidence e min_volume bloccano i rumori molesti.
-    # stop_secs a 0.2 è TASSATIVO per evitare il bug dei 30 secondi.
     silero_vad = SileroVADAnalyzer(params=VADParams(
         confidence=0.7,     
         start_secs=0.2,      
@@ -99,18 +94,20 @@ async def run_bot(websocket: WebSocket):
         language="it"
     )
     
+    # VOCE AGGIORNATA
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
         settings=CartesiaTTSService.Settings(
-            voice="ee16f140-f6dc-490e-a1ed-c1d537ea0086",
+            voice="36d94908-c5b9-4014-b521-e69aee5bead0",
             language="it"
         )
     )
     
+    # MOTORE OTTIMIZZATO PER LATENZA ZERO (VOICE-FIRST)
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
-            model="gpt-5.1",
+            model="gpt-5.4-nano",
             temperature=0.3, 
         )
     )
