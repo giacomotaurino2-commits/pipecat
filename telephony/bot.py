@@ -20,7 +20,7 @@ from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.services.openai import OpenAILLMService
 from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService
-from pipecat.frames.frames import LLMMessagesFrame
+from pipecat.frames.frames import LLMMessagesFrame, TextFrame
 
 load_dotenv(override=True)
 
@@ -90,13 +90,17 @@ async def run_bot(websocket: WebSocket):
     )
 
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+    
+    # Cartesia con la voce di Lorenzo
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
-        voice_id="79a125e8-cd45-4c13-8a67-2756221880dd",
+        voice_id="ee16f140-f6dc-490e-a1ed-c1d537ea0086",
     )
+    
+    # OpenAI aggiornato a GPT-5.1
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4o",
+        model="gpt-5.1",
     )
 
     messages = [
@@ -104,7 +108,7 @@ async def run_bot(websocket: WebSocket):
             "role": "system",
             "content": os.getenv(
                 "SYSTEM_PROMPT",
-                "Ciao! Sono l'assistente AI di Giacomo. Rispondo in modo naturale e molto breve.",
+                "Sei l'assistente vocale di Rojak. Rispondi in modo professionale e breve.",
             ),
         }
     ]
@@ -126,7 +130,10 @@ async def run_bot(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
         logger.info("Bot connesso, invio messaggio di benvenuto")
+        # Passiamo le istruzioni di base
         await task.queue_frames([LLMMessagesFrame(messages)])
+        # Il bot prende la parola per primo salutando il cliente
+        await task.queue_frames([TextFrame("Buongiorno, grazie per aver chiamato Rojak! Sono l'assistente digitale del team. Come posso aiutarla oggi?")])
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport, client):
