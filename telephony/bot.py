@@ -23,6 +23,7 @@ app = FastAPI()
 
 @app.post("/twilio")
 async def twilio_webhook(request: Request):
+    # Genera il TwiML dinamicamente usando l'host corrente
     twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Connect><Stream url="wss://{request.headers.get("host")}/ws" /></Connect></Response>'
     return Response(content=twiml, media_type="text/xml")
 
@@ -35,7 +36,7 @@ async def websocket_endpoint(websocket: WebSocket):
             stream_sid, call_sid = msg["start"]["streamSid"], msg["start"]["callSid"]
             break
 
-    # LATENZA ZERO: stop_secs a 0.2 è legge. min_volume a 0.1 taglia il rumore.
+    # SETTAGGI AGGRESSIVI: stop_secs 0.2 e min_volume 0.1 per reagire subito
     vad = SileroVADAnalyzer(params=VADParams(stop_secs=0.2, min_volume=0.1))
     
     transport = FastAPIWebsocketTransport(websocket, FastAPIWebsocketParams(
@@ -43,26 +44,50 @@ async def websocket_endpoint(websocket: WebSocket):
         serializer=TwilioFrameSerializer(stream_sid, call_sid, os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
     ))
 
-    # STT OTTIMIZZATO PER TELEFONO
-    stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"), model="nova-2-phonecall", language="it")
-    tts = CartesiaTTSService(api_key=os.getenv("CARTESIA_API_KEY"), voice_id="36d94908-c5b9-4014-b521-e69aee5bead0")
-    llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
+    # DEEPGRAM PAY-AS-YOU-GO: Usiamo nova-2-phonecall con endpointing rapidissimo
+    stt = DeepgramSTTService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"), 
+        model="nova-2-phonecall", 
+        language="it"
+    )
+    
+    tts = CartesiaTTSService(
+        api_key=os.getenv("CARTESIA_API_KEY"), 
+        voice_id="36d94908-c5b9-4014-b521-e69aee5bead0"
+    )
+    
+    llm = OpenAILLMService(
+        api_key=os.getenv("OPENAI_API_KEY"), 
+        model="gpt-4o"
+    )
 
-    # PROMPT CHIRURGICO: Nessuna allucinazione, solo risposte fulminee.
-    sys_prompt = "Sei l'assistente Rojak. Rispondi in MAX 10 parole. Sii naturale e proponi subito una call di 15 minuti. Non fare elenchi."
+    # PROMPT PER VELOCITÀ MASSIMA
+    sys_prompt = "Sei l'assistente Rojak. Rispondi in massimo 12 parole. Sii naturale, cordiale e proponi sempre una Discovery Call di 15 minuti."
     
     context = LLMContext([{"role": "system", "content": sys_prompt}])
     user_agg, assistant_agg = LLMContextAggregatorPair(context)
 
-    pipeline = Pipeline([transport.input(), stt, user_agg, llm, tts, transport.output(), assistant_agg])
+    pipeline = Pipeline([
+        transport.input(),
+        stt,
+        user_agg,
+        llm,
+        tts,
+        transport.output(),
+        assistant_agg
+    ])
+
+    # allow_interruptions=True permette una conversazione naturale
     task = PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
 
     @transport.event_handler("on_client_connected")
     async def on_connected(t, c):
+        logger.info("Chiamata agganciata - Invio saluto")
         await task.queue_frames([TextFrame("Buongiorno, sono l'assistente di Rojak. Come posso aiutarla oggi?")])
 
     runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
 
 if __name__ == "__main__":
+    # Avvio standard uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
