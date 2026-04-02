@@ -1,93 +1,141 @@
 import os
+import json
 import uvicorn
 from loguru import logger
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, Request, Response
 
-from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
+from fastapi import FastAPI, WebSocket, Request
+from fastapi.responses import Response
+
+from pipecat.transports.network.fastapi_websocket import (
+    FastAPIWebsocketTransport,
+    FastAPIWebsocketParams,
+)
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
+
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import TextFrame
+
 from pipecat.services.openai import OpenAILLMService
 from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService
 
 load_dotenv(override=True)
+
 app = FastAPI()
 
 @app.post("/twilio")
 async def twilio_webhook(request: Request):
-    # Genera il TwiML dinamicamente usando l'host corrente
-    twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Connect><Stream url="wss://{request.headers.get("host")}/ws" /></Connect></Response>'
+    host = request.headers.get("host", "")
+    ws_url = f"wss://{host}/ws"
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <Response>
+        <Connect>
+            <Stream url="{ws_url}" />
+        </Connect>
+    </Response>"""
     return Response(content=twiml, media_type="text/xml")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    stream_sid, call_sid = None, None
-    async for msg in websocket.iter_json():
+    await run_bot(websocket)
+
+async def run_bot(websocket: WebSocket):
+    stream_sid = None
+    call_sid = None
+
+    async for raw_message in websocket.iter_text():
+        msg = json.loads(raw_message)
         if msg.get("event") == "start":
-            stream_sid, call_sid = msg["start"]["streamSid"], msg["start"]["callSid"]
+            stream_sid = msg["start"]["streamSid"]
+            call_sid = msg["start"]["callSid"]
             break
 
-    # SETTAGGI AGGRESSIVI: stop_secs 0.2 e min_volume 0.1 per reagire subito
-    vad = SileroVADAnalyzer(params=VADParams(stop_secs=0.2, min_volume=0.1))
-    
-    transport = FastAPIWebsocketTransport(websocket, FastAPIWebsocketParams(
-        vad_analyzer=vad,
-        serializer=TwilioFrameSerializer(stream_sid, call_sid, os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
+    if not stream_sid:
+        return
+
+    # VAD BILANCIATO PER EVITARE RITARDI
+    silero_vad = SileroVADAnalyzer(params=VADParams(
+        confidence=0.5,     
+        start_secs=0.2,      
+        stop_secs=0.2,
+        min_volume=0.1       
     ))
 
-    # DEEPGRAM PAY-AS-YOU-GO: Usiamo nova-2-phonecall con endpointing rapidissimo
+    transport = FastAPIWebsocketTransport(
+        websocket=websocket,
+        params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            add_wav_header=False,
+            vad_analyzer=silero_vad,
+            serializer=TwilioFrameSerializer(
+                stream_sid=stream_sid,
+                call_sid=call_sid,
+                account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
+                auth_token=os.getenv("TWILIO_AUTH_TOKEN"),
+            ),
+        ),
+    )
+
+    # SERVIZI OTTIMIZZATI
     stt = DeepgramSTTService(
-        api_key=os.getenv("DEEPGRAM_API_KEY"), 
-        model="nova-2-phonecall", 
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        model="nova-2-phonecall",
         language="it"
     )
     
+    # CORREZIONE CARTESIA: Sintassi corretta per evitare il crash al primo frame
     tts = CartesiaTTSService(
-        api_key=os.getenv("CARTESIA_API_KEY"), 
-        voice_id="36d94908-c5b9-4014-b521-e69aee5bead0"
+        api_key=os.getenv("CARTESIA_API_KEY"),
+        settings=CartesiaTTSService.Settings(
+            voice="36d94908-c5b9-4014-b521-e69aee5bead0",
+            language="it"
+        )
     )
     
     llm = OpenAILLMService(
-        api_key=os.getenv("OPENAI_API_KEY"), 
+        api_key=os.getenv("OPENAI_API_KEY"),
         model="gpt-4o"
     )
 
-    # PROMPT PER VELOCITÀ MASSIMA
-    sys_prompt = "Sei l'assistente Rojak. Rispondi in massimo 12 parole. Sii naturale, cordiale e proponi sempre una Discovery Call di 15 minuti."
+    system_prompt = "Sei l'assistente Rojak. Rispondi in MAX 10 parole. Proponi call 15 min."
+    messages = [{"role": "system", "content": system_prompt}]
     
-    context = LLMContext([{"role": "system", "content": sys_prompt}])
-    user_agg, assistant_agg = LLMContextAggregatorPair(context)
+    context = LLMContext(messages)
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
 
     pipeline = Pipeline([
         transport.input(),
         stt,
-        user_agg,
+        user_aggregator,
         llm,
         tts,
         transport.output(),
-        assistant_agg
+        assistant_aggregator,
     ])
 
-    # allow_interruptions=True permette una conversazione naturale
-    task = PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
+    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
 
     @transport.event_handler("on_client_connected")
-    async def on_connected(t, c):
-        logger.info("Chiamata agganciata - Invio saluto")
+    async def on_connected(transport, client):
+        logger.info("Chiamata agganciata")
+        # Invio frame di testo per attivare Cartesia
         await task.queue_frames([TextFrame("Buongiorno, sono l'assistente di Rojak. Come posso aiutarla oggi?")])
+
+    @transport.event_handler("on_client_disconnected")
+    async def on_disconnected(transport, client):
+        await task.cancel()
 
     runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
 
 if __name__ == "__main__":
-    # Avvio standard uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
