@@ -64,7 +64,7 @@ async def run_bot(websocket: WebSocket):
             call_sid = msg["start"]["callSid"]
             break
 
-    # LO SCUDO ANTI-RUMORE CON RISPOSTA IMMEDIATA
+    # SCUDO ATTIVO E REATTIVITÀ AL MASSIMO
     silero_vad = SileroVADAnalyzer(params=VADParams(
         confidence=0.7,     
         start_secs=0.2,      
@@ -94,7 +94,6 @@ async def run_bot(websocket: WebSocket):
         language="it"
     )
     
-    # VOCE AGGIORNATA
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
         settings=CartesiaTTSService.Settings(
@@ -103,21 +102,26 @@ async def run_bot(websocket: WebSocket):
         )
     )
     
-    # MOTORE OTTIMIZZATO PER LATENZA ZERO (VOICE-FIRST)
+    # IL MOTORE PIÙ VELOCE IN ASSOLUTO PER LATENZA ZERO
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
-            model="gpt-5.4-nano",
+            model="gpt-4o-mini",
             temperature=0.3, 
         )
     )
 
+    # IL TRUCCO DELLA VIRGOLA PER FORZARE L'AVVIO IMMEDIATO DELLA VOCE
     system_prompt = """SEI IL CONSULENTE TECNOLOGICO DI ROJAK.
-    Rispondi sempre in modo naturale e discorsivo. NON USARE MAI elenchi o formattazioni.
-    REGOLA AUREA: Sii estremamente conciso. Le tue risposte non devono MAI superare le 2 frasi.
     
-    OBIETTIVO: Rispondi alla domanda del cliente in modo intelligente e proponi subito di fissare una Discovery Call di 15 minuti.
-    CHI SIAMO: Sviluppiamo AI, CRM e software custom per le aziende. Prezzi su misura."""
+    REGOLA TASSATIVA PER LA VELOCITÀ: Devi INIZIARE OGNI TUA RISPOSTA con una parola breve seguita immediatamente da una virgola (es: "Certo,", "Capisco,", "Assolutamente,", "Ok,"). Questo è un comando obbligatorio per sbloccare l'audio in tempo reale.
+    
+    REGOLE DI DIALOGO:
+    1. Sii estremamente conciso, massimo due frasi per risposta.
+    2. Zero formattazioni, zero elenchi.
+    3. Rispondi alla domanda e proponi subito una Discovery Call di 15 minuti.
+    
+    CHI SIAMO: Sviluppiamo AI, CRM e software custom. Prezzi su misura e decisi in call."""
 
     messages = [
         {"role": "system", "content": os.getenv("SYSTEM_PROMPT", system_prompt)},
