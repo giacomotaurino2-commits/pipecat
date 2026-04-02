@@ -13,7 +13,6 @@ from pipecat.transports.network.fastapi_websocket import (
 )
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -67,21 +66,16 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # VAD BILANCIATO PER LA TELEFONIA: Ignora fruscii, sente la voce chiara.
-    silero_vad = SileroVADAnalyzer(params=VADParams(
-        confidence=0.6,     
-        start_secs=0.2,      
-        stop_secs=0.2,
-        min_volume=0.15       
-    ))
-
+    # VAD DI FABBRICA: Nessuna limitazione di volume o tempi strani. 
+    # È la configurazione più stabile in assoluto.
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             add_wav_header=False,
-            vad_analyzer=silero_vad,
+            vad_analyzer=SileroVADAnalyzer(),
+            vad_audio_passthrough=True,
             serializer=TwilioFrameSerializer(
                 stream_sid=stream_sid,
                 call_sid=call_sid,
@@ -93,45 +87,31 @@ async def run_bot(websocket: WebSocket):
 
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
-        model="nova-2",
         language="it"
     )
     
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
-        settings=CartesiaTTSService.Settings(
-            voice="ee16f140-f6dc-490e-a1ed-c1d537ea0086",
-            language="it"
-        )
+        voice_id="ee16f140-f6dc-490e-a1ed-c1d537ea0086",
+        language="it"
     )
     
-    # CERVELLO SBLOCCATO: Temperature a 0.5 per un mix perfetto di logica, intelligenza e naturalezza.
+    # INTELLIGENZA PURA E COMPLETAMENTE SBLOCCATA
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        settings=OpenAILLMService.Settings(
-            model="gpt-4o",
-            temperature=0.5, 
-        )
+        model="gpt-4o",
     )
 
-    # PROMPT INTELLIGENTE: Ora è un consulente vero, non un robot con un copione.
-    system_prompt = """SEI L'ASSISTENTE VOCALE E CONSULENTE TECNOLOGICO DI ROJAK, una software house d'avanguardia.
-    Sei dotato di un'intelligenza brillante e puoi rispondere a qualsiasi domanda tecnologica, di business o sui nostri servizi. Non sei un robot limitato a un copione.
+    # PROMPT LIBERO DA OGNI CATENA
+    system_prompt = """Sei l'assistente vocale di Rojak, una software house innovativa. 
+    Sei brillante, intelligente e parli in modo estremamente naturale, come un vero essere umano.
+    Il cliente può farti qualsiasi domanda: rispondi sempre a tono, aiutalo e fai conversazione senza essere un robot.
+    Il tuo unico obiettivo generale è capire cosa gli serve e invitarlo a fissare una call di 15 minuti con il nostro team.
+    Sii naturale e mantieni un ritmo di conversazione piacevole, senza fare monologhi infiniti."""
     
-    REGOLE DI CONVERSAZIONE:
-    1. NATURALEZZA: Parla in modo sciolto, naturale e professionale. Rispondi con competenza a qualsiasi dubbio del cliente. NON usare MAI asterischi, cancelletti o elenchi puntati.
-    2. BREVITÀ INTELLIGENTE: Sii discorsivo ma conciso. Cerca di mantenere le risposte entro 2 o 3 frasi logiche.
-    3. GESTIONE DELL'IMPREVISTO: Se l'utente ti chiede cose fuori contesto, filosofiche o complesse, usa la tua intelligenza per dare una risposta sensata, poi riporta elegantemente il discorso su come Rojak può aiutarli.
-    4. OBIETTIVO FINALE: Il tuo scopo ultimo è capire le esigenze del cliente e fissare una Discovery Call di 15 minuti con un nostro esperto.
-    
-    CHI SIAMO:
-    Rojak sviluppa soluzioni AI avanzate, agenti intelligenti, CRM su misura e software custom per trasformare le aziende. I prezzi sono personalizzati."""
-
-    greeting = "Buongiorno, grazie per aver chiamato Rojak. Sono l'assistente digitale del team, come posso aiutarla oggi?"
-    
+    # Passiamo solo il prompt iniziale. La memoria si aggiornerà da sola in automatico.
     messages = [
         {"role": "system", "content": os.getenv("SYSTEM_PROMPT", system_prompt)},
-        {"role": "assistant", "content": greeting}
     ]
     
     context = LLMContext(messages)
@@ -152,7 +132,7 @@ async def run_bot(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
         logger.info("Bot connesso")
-        await task.queue_frames([TextFrame(greeting)])
+        await task.queue_frames([TextFrame("Buongiorno, grazie per aver chiamato Rojak! Sono l'assistente digitale del team. Come posso aiutarla oggi?")])
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport, client):
