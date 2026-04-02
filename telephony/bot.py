@@ -5,24 +5,30 @@ import uvicorn
 from loguru import logger
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, WebSocket, Request, Response
-from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
-from pipecat.serializers.twilio import TwilioFrameSerializer
-from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+
+import aiohttp
+
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import TextFrame, EndFrame
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 
+from pipecat.transports.services.daily import DailyParams, DailyTransport
 from pipecat.services.openai import OpenAILLMService
 from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService
 
 load_dotenv(override=True)
 app = FastAPI()
+
+DAILY_API_KEY = os.getenv("DAILY_API_KEY")
+DAILY_API_URL = "https://api.daily.co/v1"
 
 SYSTEM_PROMPT = """Sei Giulia, la segretaria digitale di Rojak — un servizio di receptionist AI.
 Sei professionale, rapida e diretta. Regole TASSATIVE:
@@ -38,20 +44,55 @@ Sei professionale, rapida e diretta. Regole TASSATIVE:
 GREETING = "Buongiorno, Rojak. Giulia al telefono, come posso aiutarla?"
 
 
-def build_cartesia_tts():
-    api_key = os.getenv("CARTESIA_API_KEY")
-    voice_id = "ee16f140-f6dc-490e-a1ed-c1d537ea0086"
+async def create_daily_room() -> dict:
+    """Crea una room Daily temporanea per la chiamata."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{DAILY_API_URL}/rooms",
+            headers={"Authorization": f"Bearer {DAILY_API_KEY}"},
+            json={
+                "properties": {
+                    "max_participants": 2,
+                    "exp": 3600,  # room scade dopo 1 ora
+                    "enable_chat": False,
+                    "enable_prejoin_ui": False,
+                }
+            },
+        ) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise Exception(f"Daily room creation failed: {text}")
+            return await resp.json()
 
-    # sonic-multilingual con language causa il bug dei timestamps.
-    # Usiamo sonic-2 senza language: la voce italiana è già nativa nel voice_id.
+
+async def create_daily_token(room_url: str) -> str:
+    """Crea un token owner per pipecat nella room."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{DAILY_API_URL}/meeting-tokens",
+            headers={"Authorization": f"Bearer {DAILY_API_KEY}"},
+            json={
+                "properties": {
+                    "room_name": room_url.split("/")[-1],
+                    "is_owner": True,
+                    "enable_recording": False,
+                }
+            },
+        ) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise Exception(f"Daily token creation failed: {text}")
+            data = await resp.json()
+            return data["token"]
+
+
+def build_cartesia_tts(voice_id: str):
+    api_key = os.getenv("CARTESIA_API_KEY")
+
     try:
         if hasattr(CartesiaTTSService, "Settings"):
             settings_params = inspect.signature(CartesiaTTSService.Settings.__init__).parameters
-            kwargs = {
-                "voice": voice_id,
-                "model": "sonic-2",   # sonic-2 non forza timestamps
-            }
-            # NON passiamo language per evitare il bug timestamps
+            kwargs = {"voice": voice_id, "model": "sonic-2"}
             settings = CartesiaTTSService.Settings(**{
                 k: v for k, v in kwargs.items() if k in settings_params
             })
@@ -107,19 +148,15 @@ def build_pipeline_task(pipeline):
     logger.info(f"PipelineTask params rilevati: {params}")
 
     if "allow_interruptions" in params:
-        logger.info("PipelineTask: kwargs diretti")
         return PipelineTask(pipeline, allow_interruptions=True)
 
     if "params" in params:
         try:
             from pipecat.pipeline.task import PipelineParams
-            # Proviamo con keyword argument invece che posizionale
-            logger.info("PipelineTask: PipelineParams come kwarg")
             return PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
         except Exception as e:
             logger.warning(f"PipelineParams fallito: {e}")
 
-    logger.info("PipelineTask: solo pipeline")
     return PipelineTask(pipeline)
 
 
@@ -130,53 +167,63 @@ async def health():
 
 @app.post("/twilio")
 async def twilio_webhook(request: Request):
-    host = request.headers.get("host")
-    twiml = (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        "<Response><Connect>"
-        f'<Stream url="wss://{host}/ws" />'
-        "</Connect></Response>"
-    )
-    return Response(content=twiml, media_type="text/xml")
+    """
+    Twilio chiama questo endpoint quando arriva una telefonata.
+    Creiamo una room Daily e giriamo Twilio lì dentro via SIP.
+    """
+    try:
+        room = await create_daily_room()
+        room_url = room["url"]
+        room_name = room["name"]
+        logger.info(f"Room Daily creata: {room_url}")
+
+        # Avvia la pipeline in background
+        import asyncio
+        asyncio.create_task(run_bot(room_url, room_name))
+
+        # Twilio si connette alla room Daily via SIP
+        sip_uri = f"sip:{room_name}@sip.daily.co"
+        twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<Response>"
+            f'<Dial><Sip>{sip_uri}</Sip></Dial>'
+            "</Response>"
+        )
+        return Response(content=twiml, media_type="text/xml")
+
+    except Exception as e:
+        logger.error(f"Errore creazione room: {e}")
+        twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<Response><Say language='it-IT'>Servizio temporaneamente non disponibile.</Say></Response>"
+        )
+        return Response(content=twiml, media_type="text/xml")
 
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
+async def run_bot(room_url: str, room_name: str):
+    """Pipeline pipecat con DailyTransport."""
+    logger.info(f"Bot avviato per room: {room_url}")
 
-    stream_sid, call_sid = None, None
-
-    async for raw_message in websocket.iter_text():
-        msg = json.loads(raw_message)
-        if msg.get("event") == "start":
-            stream_sid = msg["start"]["streamSid"]
-            call_sid = msg["start"]["callSid"]
-            logger.info(f"Chiamata avviata | stream={stream_sid} | call={call_sid}")
-            break
-        if msg.get("event") == "stop":
-            logger.info("Chiamata terminata prima dell'handshake")
-            return
-
-    if not stream_sid:
-        logger.warning("Stream SID non ricevuto, chiudo WebSocket")
-        await websocket.close()
+    try:
+        token = await create_daily_token(room_url)
+    except Exception as e:
+        logger.error(f"Errore token Daily: {e}")
         return
 
-    # VAD: torniamo a 0.2s come raccomandato dai warning nel log
+    # VOICE ID — sostituisci con il tuo voice_id italiano da Cartesia
+    VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "36d94908-c5b9-4014-b521-e69aee5bead0")
+
     vad = SileroVADAnalyzer(params=VADParams(stop_secs=0.2))
 
-    transport = FastAPIWebsocketTransport(
-        websocket,
-        FastAPIWebsocketParams(
+    transport = DailyTransport(
+        room_url,
+        token,
+        "Giulia",  # nome del bot nella room
+        DailyParams(
             audio_out_enabled=True,
             audio_in_enabled=True,
             vad_analyzer=vad,
-            serializer=TwilioFrameSerializer(
-                stream_sid,
-                call_sid,
-                os.getenv("TWILIO_ACCOUNT_SID"),
-                os.getenv("TWILIO_AUTH_TOKEN"),
-            ),
+            transcription_enabled=False,  # usiamo Deepgram, non Daily transcription
         ),
     )
 
@@ -187,7 +234,7 @@ async def websocket_endpoint(websocket: WebSocket):
         extra={"endpointing": 200, "utterance_end_ms": 1000},
     )
 
-    tts = build_cartesia_tts()
+    tts = build_cartesia_tts(VOICE_ID)
     llm = build_openai_llm()
 
     context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
@@ -205,19 +252,19 @@ async def websocket_endpoint(websocket: WebSocket):
 
     task = build_pipeline_task(pipeline)
 
-    @transport.event_handler("on_client_connected")
-    async def on_connected(t, c):
-        logger.info("Client connesso — invio saluto")
+    @transport.event_handler("on_first_participant_joined")
+    async def on_participant_joined(transport, participant):
+        logger.info(f"Partecipante connesso: {participant.get('id')}")
         await task.queue_frames([TextFrame(GREETING)])
 
-    @transport.event_handler("on_client_disconnected")
-    async def on_disconnected(t, c):
-        logger.info("Client disconnesso — chiudo pipeline")
+    @transport.event_handler("on_participant_left")
+    async def on_participant_left(transport, participant, reason):
+        logger.info(f"Partecipante uscito: {reason}")
         await task.queue_frames([EndFrame()])
 
     runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
-    logger.info(f"Sessione terminata | stream={stream_sid}")
+    logger.info(f"Sessione terminata per room: {room_name}")
 
 
 if __name__ == "__main__":
