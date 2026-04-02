@@ -67,11 +67,13 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # VAD PERFETTO: 
+    # VAD BILANCIATO: 
+    # confidence=0.6 fa sì che ignori i sospiri, i fruscii e la sua stessa eco.
+    # stop_secs=0.3 ti dà il tempo di fare una piccola pausa tra una parola e l'altra.
     silero_vad = SileroVADAnalyzer(params=VADParams(
-        confidence=0.5,     
+        confidence=0.6,     
         start_secs=0.2,      
-        stop_secs=0.2,
+        stop_secs=0.3,
         min_volume=0.1       
     ))
 
@@ -105,29 +107,26 @@ async def run_bot(websocket: WebSocket):
         )
     )
     
-    # DOWNGRADE AL 5.1 PER MINORE LATENZA
+    # GPT-5.1 CONFERMATO: Latenza azzerata a 2 secondi.
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
             model="gpt-5.1",
-            temperature=0.4, 
+            temperature=0.3, 
         )
     )
 
-    # PROMPT OTTIMIZZATO PER VELOCITÀ E "RIEMPITIVI"
+    # PROMPT BLINDATO E SNELLO
     system_prompt = """SEI IL CONSULENTE TECNOLOGICO DI ROJAK.
-    Rispondi sempre in modo naturale, senza asterischi o elenchi. Sii conciso (2 frasi massimo).
+    Rispondi sempre in modo naturale e discorsivo. NON USARE MAI elenchi o formattazioni.
+    REGOLA AUREA: Sii estremamente conciso. Le tue risposte non devono MAI superare le 2 frasi.
     
-    TRUCCO DI VELOCITÀ: Inizia SEMPRE le tue risposte con parole rapide come "Certo,", "Capisco,", "Assolutamente,", o "Ottima domanda,".
-    
-    OBIETTIVO: Rispondi alla domanda e proponi una Discovery Call di 15 minuti.
-    CHI SIAMO: Sviluppiamo AI, CRM e software custom. Prezzi personalizzati."""
+    OBIETTIVO: Rispondi alla domanda del cliente in modo intelligente e proponi subito di fissare una Discovery Call di 15 minuti.
+    CHI SIAMO: Sviluppiamo AI, CRM e software custom per le aziende. Prezzi su misura."""
 
-    greeting = "Buongiorno, grazie per aver chiamato Rojak. Sono l'assistente digitale del team, come posso aiutarla oggi?"
-    
+    # Pulita la memoria doppia. Ora c'è solo il system_prompt.
     messages = [
         {"role": "system", "content": os.getenv("SYSTEM_PROMPT", system_prompt)},
-        {"role": "assistant", "content": greeting}
     ]
     
     context = LLMContext(messages)
@@ -143,12 +142,13 @@ async def run_bot(websocket: WebSocket):
         assistant_aggregator,
     ])
 
-    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=False))
+    # INTERRUZIONI RIATTIVATE: Ora la conversazione è viva e naturale.
+    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
 
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
         logger.info("Bot connesso")
-        await task.queue_frames([TextFrame(greeting)])
+        await task.queue_frames([TextFrame("Buongiorno, grazie per aver chiamato Rojak. Sono l'assistente digitale del team, come posso aiutarla oggi?")])
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport, client):
