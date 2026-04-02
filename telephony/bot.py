@@ -17,10 +17,9 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 
-# --- NUOVI IMPORT PER PIPECAT 0.0.108 ---
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
-from pipecat.frames.frames import LLMMessagesFrame, TextFrame
+from pipecat.frames.frames import TextFrame
 
 from pipecat.services.openai import OpenAILLMService
 from pipecat.services.cartesia import CartesiaTTSService
@@ -28,7 +27,6 @@ from pipecat.services.deepgram import DeepgramSTTService
 
 load_dotenv(override=True)
 
-# Inizializza il server web
 app = FastAPI()
 
 @app.post("/twilio")
@@ -69,12 +67,13 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
+    # Parametri aggiornati e puliti per Pipecat 0.0.108
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
             audio_out_enabled=True,
             add_wav_header=False,
-            vad_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
             vad_audio_passthrough=True,
             serializer=TwilioFrameSerializer(
@@ -86,8 +85,10 @@ async def run_bot(websocket: WebSocket):
         ),
     )
 
+    # Aggiunto model="nova-2" per annientare le allucinazioni sui rumori
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
+        model="nova-2",
         language="it"
     )
     
@@ -112,7 +113,6 @@ async def run_bot(websocket: WebSocket):
         }
     ]
     
-    # --- IL NUOVO SISTEMA DI MEMORIA UNIVERSALE ---
     context = LLMContext(messages)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
 
@@ -131,7 +131,7 @@ async def run_bot(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
         logger.info("Bot connesso")
-        await task.queue_frames([LLMMessagesFrame(messages)])
+        # Il bot dirà questa frase senza che l'AI generi doppioni
         await task.queue_frames([TextFrame("Buongiorno, grazie per aver chiamato Rojak! Sono l'assistente digitale del team. Come posso aiutarla oggi?")])
 
     @transport.event_handler("on_client_disconnected")
@@ -144,4 +144,4 @@ async def run_bot(websocket: WebSocket):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)      
