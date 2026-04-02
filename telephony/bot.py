@@ -13,6 +13,7 @@ from pipecat.transports.network.fastapi_websocket import (
 )
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -31,7 +32,6 @@ app = FastAPI()
 
 @app.post("/twilio")
 async def twilio_webhook(request: Request):
-    logger.info("Chiamata in arrivo da Twilio...")
     host = request.headers.get("host", "")
     ws_url = f"wss://{host}/ws"
     
@@ -67,14 +67,23 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # Parametri aggiornati e puliti per Pipecat 0.0.108
+    # 1. ORCHESTRAZIONE DEL VAD (ORECCHIE BLINDATE)
+    # Ignora i fruscii, aspetta 0.8 secondi (800ms) di silenzio prima di risponderti,
+    # permettendoti di fare pause naturali senza che il bot ti tagli la parola.
+    silero_vad = SileroVADAnalyzer(params=VADParams(
+        confidence=0.75,     # Ignora rumori sospetti (0.5 è troppo sensibile)
+        start_secs=0.2,      # Parte veloce quando parli
+        stop_secs=0.8,       # TI LASCIA FINIRE DI PARLARE prima di elaborare
+        min_volume=0.3       # Filtra il respiro e il rumore bianco della linea
+    ))
+
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             add_wav_header=False,
-            vad_analyzer=SileroVADAnalyzer(),
+            vad_analyzer=silero_vad,
             vad_audio_passthrough=True,
             serializer=TwilioFrameSerializer(
                 stream_sid=stream_sid,
@@ -85,7 +94,6 @@ async def run_bot(websocket: WebSocket):
         ),
     )
 
-    # Aggiunto model="nova-2" per annientare le allucinazioni sui rumori
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         model="nova-2",
@@ -98,18 +106,38 @@ async def run_bot(websocket: WebSocket):
         language="it"
     )
     
+    # 2. ORCHESTRAZIONE DEL CERVELLO (IL CECCHINO)
+    # Impostiamo temperature a 0.2: zero creatività inutile, massima obbedienza al prompt.
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4o",
+        settings=OpenAILLMService.Settings(
+            model="gpt-4o",
+            temperature=0.2, 
+        )
     )
+
+    # 3. KNOWLEDGE BASE RINFORZATA (PROMPT CORAZZATO)
+    # Salviamo le regole direttamente nel codice così non dipendiamo da Railway.
+    system_prompt = """SEI L'ASSISTENTE VOCALE UFFICIALE DI ROJAK, software house d'avanguardia. 
+    Il tuo tono è professionale, naturale, dinamico e orientato alla soluzione.
+    
+    REGOLE VOCALI TASSATIVE:
+    1. FORMATO: Scrivi SOLO testo semplice. MAI elenchi puntati, MAI asterischi, MAI markdown.
+    2. BREVITÀ: Rispondi SEMPRE con massimo due frasi. Non fare MAI monologhi. 
+    3. NUMERI: Scrivi i numeri in lettere (es. "quindici", "cento").
+    4. GESTIONE: Chiudi ogni tua risposta con una breve domanda per guidare l'utente.
+    
+    COSA FA ROJAK: Soluzioni AI (agenti intelligenti e automazioni), CRM su misura, Siti Web e Web App scalabili, Software Custom.
+    
+    OBIETTIVO: Fissare una Discovery Call di quindici minuti.
+    Se chiedono il costo, rispondi che è su misura e proponi la call.
+    Se chiedono i servizi, citane due al massimo e proponi la call.
+    Se accettano, chiedi nome e email per confermare."""
 
     messages = [
         {
             "role": "system",
-            "content": os.getenv(
-                "SYSTEM_PROMPT",
-                "Sei l'assistente vocale di Rojak. Rispondi in modo professionale e breve.",
-            ),
+            "content": os.getenv("SYSTEM_PROMPT", system_prompt),
         }
     ]
     
@@ -131,7 +159,6 @@ async def run_bot(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
         logger.info("Bot connesso")
-        # Il bot dirà questa frase senza che l'AI generi doppioni
         await task.queue_frames([TextFrame("Buongiorno, grazie per aver chiamato Rojak! Sono l'assistente digitale del team. Come posso aiutarla oggi?")])
 
     @transport.event_handler("on_client_disconnected")
@@ -144,4 +171,4 @@ async def run_bot(websocket: WebSocket):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)      
+    uvicorn.run(app, host="0.0.0.0", port=port)
