@@ -11,7 +11,7 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import TextFrame, EndFrame
@@ -23,7 +23,6 @@ from pipecat.services.deepgram import DeepgramSTTService
 load_dotenv(override=True)
 app = FastAPI()
 
-# ── Sistema Prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """Sei Giulia, la segretaria digitale di Rojak — un servizio di receptionist AI.
 Sei professionale, rapida e diretta. Regole TASSATIVE:
 - Rispondi SEMPRE in italiano
@@ -32,13 +31,15 @@ Sei professionale, rapida e diretta. Regole TASSATIVE:
 - Se chiedono info sul servizio: "Rojak gestisce chiamate 24/7 con AI. Prenotiamo una Discovery Call di 15 minuti?"
 - Se vogliono parlare col titolare: "Il titolare non è disponibile ora. Posso fissare una chiamata per lei?"
 - Se lamentele o urgenze: "Capisco. La metto in lista prioritaria. Può lasciarmi un recapito?"
-- Mai dire "Come posso aiutarla?" più di una volta
 - Non fare domande multiple nella stessa risposta
 - Chiudi sempre con UNA sola domanda o proposta d'azione"""
 
 GREETING = "Buongiorno, Rojak. Giulia al telefono, come posso aiutarla?"
 
-# ── Twilio Webhook ─────────────────────────────────────────────────────────────
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 @app.post("/twilio")
 async def twilio_webhook(request: Request):
     host = request.headers.get("host")
@@ -50,14 +51,12 @@ async def twilio_webhook(request: Request):
     )
     return Response(content=twiml, media_type="text/xml")
 
-# ── WebSocket principale ───────────────────────────────────────────────────────
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
 
     stream_sid, call_sid = None, None
 
-    # Leggi lo stream SID prima di costruire la pipeline
     async for raw_message in websocket.iter_text():
         msg = json.loads(raw_message)
         if msg.get("event") == "start":
@@ -74,15 +73,10 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close()
         return
 
-    # ── VAD: equilibrio tra reattività e falsi positivi ───────────────────────
-    vad = SileroVADAnalyzer(
-        params=VADParams(
-            stop_secs=0.4,          # 0.4s di silenzio → fine turno (era 0.2, troppo aggressivo)
-            min_volume=0.6,         # filtra rumori di fondo
-        )
-    )
+    # ── VAD ───────────────────────────────────────────────────────────────────
+    vad = SileroVADAnalyzer(params=VADParams(stop_secs=0.4))
 
-    # ── Transport Twilio ───────────────────────────────────────────────────────
+    # ── Transport ─────────────────────────────────────────────────────────────
     transport = FastAPIWebsocketTransport(
         websocket,
         FastAPIWebsocketParams(
@@ -98,39 +92,40 @@ async def websocket_endpoint(websocket: WebSocket):
         ),
     )
 
-    # ── STT: Deepgram Nova-2 (phonecall = ottimizzato per telefonia) ───────────
+    # ── STT ───────────────────────────────────────────────────────────────────
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         model="nova-2-phonecall",
         language="it",
-        # Endpointing ridotto = trascrizione più veloce
         extra={"endpointing": 200, "utterance_end_ms": 1000},
     )
 
-    # ── TTS: Cartesia ──────────────────────────────────────────────────────────
+    # ── TTS — nuova sintassi Settings ─────────────────────────────────────────
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
-        voice_id="36d94908-c5b9-4014-b521-e69aee5bead0",
-        model_id="sonic-multilingual",   # modello attuale Cartesia multilingua
-        language="it",
-        speed="normal",                  # "fast" se vuoi ancora più reattività
-    )
-
-    # ── LLM: GPT-4o con parametri per risposte brevi e veloci ─────────────────
-    llm = OpenAILLMService(
-        api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4o-mini",   # più veloce di gpt-4o per turni brevi, quasi identico
-        params=OpenAILLMService.InputParams(
-            max_tokens=60,     # cap duro: max ~15 parole in uscita
-            temperature=0.4,   # più deterministico = più coerente
+        settings=CartesiaTTSService.Settings(
+            voice="36d94908-c5b9-4014-b521-e69aee5bead0",
+            model="sonic-multilingual",
+            language="it",
+            speed="normal",
         ),
     )
 
-    # ── Contesto LLM ──────────────────────────────────────────────────────────
+    # ── LLM — nuova sintassi Settings ─────────────────────────────────────────
+    llm = OpenAILLMService(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        settings=OpenAILLMService.Settings(
+            model="gpt-4o-mini",
+            max_tokens=60,
+            temperature=0.4,
+        ),
+    )
+
+    # ── Contesto ──────────────────────────────────────────────────────────────
     context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
     user_agg, assistant_agg = LLMContextAggregatorPair(context)
 
-    # ── Pipeline ───────────────────────────────────────────────────────────────
+    # ── Pipeline ──────────────────────────────────────────────────────────────
     pipeline = Pipeline([
         transport.input(),
         stt,
@@ -141,37 +136,27 @@ async def websocket_endpoint(websocket: WebSocket):
         assistant_agg,
     ])
 
+    # ── FIX PRINCIPALE: PipelineTask ora accetta solo il pipeline ─────────────
+    # I parametri vanno passati come kwargs, non come oggetto PipelineParams
     task = PipelineTask(
         pipeline,
-        PipelineParams(
-            allow_interruptions=True,          # utente può interrompere mid-sentence
-            enable_metrics=True,               # log latenze per debugging
-        ),
+        allow_interruptions=True,
+        enable_metrics=True,
     )
 
-    # ── Evento: connessione stabilita → saluto immediato ──────────────────────
     @transport.event_handler("on_client_connected")
     async def on_connected(t, c):
         logger.info("Client connesso — invio saluto")
         await task.queue_frames([TextFrame(GREETING)])
 
-    # ── Evento: disconnessione pulita ─────────────────────────────────────────
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(t, c):
         logger.info("Client disconnesso — chiudo pipeline")
         await task.queue_frames([EndFrame()])
 
-    # ── Avvio ─────────────────────────────────────────────────────────────────
     runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
     logger.info(f"Sessione terminata | stream={stream_sid}")
-
-
-# ── Health check (utile per Railway/Render) ────────────────────────────────────
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
 
 if __name__ == "__main__":
     uvicorn.run(
