@@ -17,7 +17,6 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import TextFrame
@@ -64,14 +63,18 @@ async def run_bot(websocket: WebSocket):
             call_sid = msg["start"]["callSid"]
             break
 
-    # SCUDO ATTIVO E REATTIVITÀ AL MASSIMO
+    if not stream_sid:
+        return
+
+    # VAD BILANCIATO
     silero_vad = SileroVADAnalyzer(params=VADParams(
-        confidence=0.7,     
+        confidence=0.5,     
         start_secs=0.2,      
         stop_secs=0.2,
-        min_volume=0.2       
+        min_volume=0.1       
     ))
 
+    # SINCRONIZZAZIONE A 8000 Hz PER TWILIO
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
@@ -79,6 +82,8 @@ async def run_bot(websocket: WebSocket):
             audio_out_enabled=True,
             add_wav_header=False,
             vad_analyzer=silero_vad,
+            audio_in_sample_rate=8000,   # Sincronizzato con il telefono
+            audio_out_sample_rate=8000,  # Sincronizzato con il telefono
             serializer=TwilioFrameSerializer(
                 stream_sid=stream_sid,
                 call_sid=call_sid,
@@ -98,30 +103,25 @@ async def run_bot(websocket: WebSocket):
         api_key=os.getenv("CARTESIA_API_KEY"),
         settings=CartesiaTTSService.Settings(
             voice="36d94908-c5b9-4014-b521-e69aee5bead0",
-            language="it"
+            language="it",
+            sample_rate=8000  # Sincronizzato con il telefono
         )
     )
     
-    # IL MOTORE PIÙ VELOCE IN ASSOLUTO PER LATENZA ZERO
+    # MODELLO REALE PER LA MINIMA LATENZA
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             temperature=0.3, 
         )
     )
 
-    # IL TRUCCO DELLA VIRGOLA PER FORZARE L'AVVIO IMMEDIATO DELLA VOCE
     system_prompt = """SEI IL CONSULENTE TECNOLOGICO DI ROJAK.
+    Rispondi sempre in modo naturale, conciso e discorsivo. MAI superare le 2 frasi.
     
-    REGOLA TASSATIVA PER LA VELOCITÀ: Devi INIZIARE OGNI TUA RISPOSTA con una parola breve seguita immediatamente da una virgola (es: "Certo,", "Capisco,", "Assolutamente,", "Ok,"). Questo è un comando obbligatorio per sbloccare l'audio in tempo reale.
-    
-    REGOLE DI DIALOGO:
-    1. Sii estremamente conciso, massimo due frasi per risposta.
-    2. Zero formattazioni, zero elenchi.
-    3. Rispondi alla domanda e proponi subito una Discovery Call di 15 minuti.
-    
-    CHI SIAMO: Sviluppiamo AI, CRM e software custom. Prezzi su misura e decisi in call."""
+    OBIETTIVO: Rispondi alla domanda del cliente e proponi di fissare una Discovery Call di 15 minuti.
+    CHI SIAMO: Sviluppiamo AI, CRM e software custom per le aziende. Prezzi su misura."""
 
     messages = [
         {"role": "system", "content": os.getenv("SYSTEM_PROMPT", system_prompt)},
