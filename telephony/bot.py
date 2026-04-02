@@ -67,7 +67,7 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # VAD OTTIMIZZATO PER LATENZA ZERO
+    # VAD PERFETTO: 
     silero_vad = SileroVADAnalyzer(params=VADParams(
         confidence=0.5,     
         start_secs=0.2,      
@@ -105,26 +105,23 @@ async def run_bot(websocket: WebSocket):
         )
     )
     
-    # MOTORE AGGIORNATO AL MODELLO PIÙ AVANZATO
+    # DOWNGRADE AL 5.1 PER MINORE LATENZA
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
-            model="gpt-5.4",
-            temperature=0.5, 
+            model="gpt-5.1",
+            temperature=0.4, 
         )
     )
 
-    system_prompt = """SEI L'ASSISTENTE VOCALE E CONSULENTE TECNOLOGICO DI ROJAK, una software house d'avanguardia.
-    Sei dotato di un'intelligenza brillante e puoi rispondere a qualsiasi domanda tecnologica, di business o sui nostri servizi. Non sei un robot limitato a un copione.
+    # PROMPT OTTIMIZZATO PER VELOCITÀ E "RIEMPITIVI"
+    system_prompt = """SEI IL CONSULENTE TECNOLOGICO DI ROJAK.
+    Rispondi sempre in modo naturale, senza asterischi o elenchi. Sii conciso (2 frasi massimo).
     
-    REGOLE DI CONVERSAZIONE:
-    1. NATURALEZZA: Parla in modo sciolto, naturale e professionale. Rispondi con competenza a qualsiasi dubbio del cliente. NON usare MAI asterischi, cancelletti o elenchi puntati.
-    2. BREVITÀ INTELLIGENTE: Sii discorsivo ma conciso. Cerca di mantenere le risposte entro 2 o 3 frasi logiche.
-    3. GESTIONE DELL'IMPREVISTO: Se l'utente ti chiede cose fuori contesto, filosofiche o complesse, usa la tua intelligenza per dare una risposta sensata, poi riporta elegantemente il discorso su come Rojak può aiutarli.
-    4. OBIETTIVO FINALE: Il tuo scopo ultimo è capire le esigenze del cliente e fissare una Discovery Call di 15 minuti con un nostro esperto.
+    TRUCCO DI VELOCITÀ: Inizia SEMPRE le tue risposte con parole rapide come "Certo,", "Capisco,", "Assolutamente,", o "Ottima domanda,".
     
-    CHI SIAMO:
-    Rojak sviluppa soluzioni AI avanzate, agenti intelligenti, CRM su misura e software custom per trasformare le aziende. I prezzi sono personalizzati."""
+    OBIETTIVO: Rispondi alla domanda e proponi una Discovery Call di 15 minuti.
+    CHI SIAMO: Sviluppiamo AI, CRM e software custom. Prezzi personalizzati."""
 
     greeting = "Buongiorno, grazie per aver chiamato Rojak. Sono l'assistente digitale del team, come posso aiutarla oggi?"
     
