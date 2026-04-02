@@ -1,9 +1,11 @@
 import os
 import json
+import uvicorn
 from loguru import logger
 from dotenv import load_dotenv
 
-from fastapi import WebSocket
+from fastapi import FastAPI, WebSocket, Request
+from fastapi.responses import Response
 
 from pipecat.transports.network.fastapi_websocket import (
     FastAPIWebsocketTransport,
@@ -22,13 +24,36 @@ from pipecat.frames.frames import LLMMessagesFrame
 
 load_dotenv(override=True)
 
+# Inizializza il server web
+app = FastAPI()
 
+# 1. Quando Twilio chiama il tuo link, entra qui
+@app.post("/twilio")
+async def twilio_webhook(request: Request):
+    logger.info("Chiamata in arrivo da Twilio...")
+    host = request.headers.get("host", "")
+    # Diciamo a Twilio di collegarsi al nostro WebSocket sicuro
+    ws_url = f"wss://{host}/ws"
+    
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <Response>
+        <Connect>
+            <Stream url="{ws_url}" />
+        </Connect>
+    </Response>"""
+    return Response(content=twiml, media_type="text/xml")
+
+# 2. Twilio si collega al WebSocket ed entra qui
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    await run_bot(websocket)
+
+# 3. Il TUO codice originale che gestisce l'AI
 async def run_bot(websocket: WebSocket):
-    # Legge i primi messaggi Twilio per ottenere stream_sid e call_sid
     stream_sid = None
     call_sid = None
 
-    # Il primo messaggio Twilio è sempre "connected", il secondo è "start"
     async for raw_message in websocket.iter_text():
         msg = json.loads(raw_message)
         event = msg.get("event")
@@ -110,3 +135,9 @@ async def run_bot(websocket: WebSocket):
 
     runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
+
+# Accensione del server sulla porta 8080
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8080))
+    logger.info(f"Avvio server sulla porta {port}...")
+    uvicorn.run(app, host="0.0.0.0", port=port)
