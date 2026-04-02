@@ -13,7 +13,6 @@ from pipecat.transports.network.fastapi_websocket import (
 )
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -54,10 +53,6 @@ async def run_bot(websocket: WebSocket):
     async for raw_message in websocket.iter_text():
         msg = json.loads(raw_message)
         event = msg.get("event")
-
-        if event == "connected":
-            continue
-
         if event == "start":
             stream_sid = msg["start"]["streamSid"]
             call_sid = msg["start"]["callSid"]
@@ -66,24 +61,14 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # VAD BILANCIATO
-    silero_vad = SileroVADAnalyzer(params=VADParams(
-        confidence=0.5,     
-        start_secs=0.2,      
-        stop_secs=0.2,
-        min_volume=0.1       
-    ))
-
-    # SINCRONIZZAZIONE A 8000 Hz PER TWILIO
+    # VAD STANDARD (Il più stabile per evitare crash)
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             add_wav_header=False,
-            vad_analyzer=silero_vad,
-            audio_in_sample_rate=8000,   # Sincronizzato con il telefono
-            audio_out_sample_rate=8000,  # Sincronizzato con il telefono
+            vad_analyzer=SileroVADAnalyzer(),
             serializer=TwilioFrameSerializer(
                 stream_sid=stream_sid,
                 call_sid=call_sid,
@@ -93,40 +78,31 @@ async def run_bot(websocket: WebSocket):
         ),
     )
 
+    # ORECCHIE RAPIDE (Senza timeout lunghi)
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         model="nova-2",
         language="it"
     )
     
+    # BOCCA FLUIDA
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
-        settings=CartesiaTTSService.Settings(
-            voice="36d94908-c5b9-4014-b521-e69aee5bead0",
-            language="it",
-            sample_rate=8000  # Sincronizzato con il telefono
-        )
+        voice_id="36d94908-c5b9-4014-b521-e69aee5bead0",
     )
     
-    # MODELLO REALE PER LA MINIMA LATENZA
+    # CERVELLO REALE E VELOCE
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        settings=OpenAILLMService.Settings(
-            model="gpt-4o",
-            temperature=0.3, 
-        )
+        model="gpt-4o"
     )
 
-    system_prompt = """SEI IL CONSULENTE TECNOLOGICO DI ROJAK.
-    Rispondi sempre in modo naturale, conciso e discorsivo. MAI superare le 2 frasi.
-    
-    OBIETTIVO: Rispondi alla domanda del cliente e proponi di fissare una Discovery Call di 15 minuti.
-    CHI SIAMO: Sviluppiamo AI, CRM e software custom per le aziende. Prezzi su misura."""
+    system_prompt = """SEI IL CONSULENTE DI ROJAK. 
+    Parla in modo naturale. Rispondi in massimo 2 frasi. 
+    OBIETTIVO: Fissare una Discovery Call di 15 minuti.
+    Inizia le risposte con una parola di conferma (Certo, Capisco, ecc)."""
 
-    messages = [
-        {"role": "system", "content": os.getenv("SYSTEM_PROMPT", system_prompt)},
-    ]
-    
+    messages = [{"role": "system", "content": system_prompt}]
     context = LLMContext(messages)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
 
@@ -144,17 +120,14 @@ async def run_bot(websocket: WebSocket):
 
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
-        logger.info("Bot connesso")
-        await task.queue_frames([TextFrame("Buongiorno, grazie per aver chiamato Rojak. Sono l'assistente digitale del team, come posso aiutarla oggi?")])
+        await task.queue_frames([TextFrame("Buongiorno, sono l'assistente di Rojak. Come posso aiutarla?")])
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport, client):
-        logger.info("Chiamata terminata")
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
