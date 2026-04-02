@@ -39,27 +39,22 @@ GREETING = "Buongiorno, Rojak. Giulia al telefono, come posso aiutarla?"
 
 
 def build_cartesia_tts():
-    """Costruisce CartesiaTTSService rilevando automaticamente la sintassi supportata."""
     api_key = os.getenv("CARTESIA_API_KEY")
     voice_id = "36d94908-c5b9-4014-b521-e69aee5bead0"
     model = "sonic-multilingual"
 
-    # Prova prima la sintassi nuova con Settings
     try:
         if hasattr(CartesiaTTSService, "Settings"):
             settings_params = inspect.signature(CartesiaTTSService.Settings.__init__).parameters
             kwargs = {"voice": voice_id, "model": model}
             if "language" in settings_params:
                 kwargs["language"] = "it"
-            if "speed" in settings_params:
-                kwargs["speed"] = "normal"
             settings = CartesiaTTSService.Settings(**kwargs)
-            logger.info(f"Cartesia: uso sintassi Settings con params={list(kwargs.keys())}")
+            logger.info(f"Cartesia: Settings con params={list(kwargs.keys())}")
             return CartesiaTTSService(api_key=api_key, settings=settings)
     except Exception as e:
-        logger.warning(f"Cartesia Settings fallita ({e}), provo sintassi legacy")
+        logger.warning(f"Cartesia Settings fallita ({e}), provo legacy")
 
-    # Fallback: sintassi vecchia con parametri diretti
     try:
         init_params = inspect.signature(CartesiaTTSService.__init__).parameters
         kwargs = {"api_key": api_key, "voice_id": voice_id}
@@ -69,18 +64,16 @@ def build_cartesia_tts():
             kwargs["model"] = model
         if "language" in init_params:
             kwargs["language"] = "it"
-        logger.info(f"Cartesia: uso sintassi legacy con params={list(kwargs.keys())}")
+        logger.info(f"Cartesia: legacy con params={list(kwargs.keys())}")
         return CartesiaTTSService(**kwargs)
     except Exception as e:
-        logger.error(f"Cartesia: tutte le sintassi fallite — {e}")
+        logger.error(f"Cartesia: tutto fallito — {e}")
         raise
 
 
 def build_openai_llm():
-    """Costruisce OpenAILLMService rilevando automaticamente la sintassi supportata."""
     api_key = os.getenv("OPENAI_API_KEY")
 
-    # Prova prima la sintassi nuova con Settings
     try:
         if hasattr(OpenAILLMService, "Settings"):
             settings_params = inspect.signature(OpenAILLMService.Settings.__init__).parameters
@@ -90,42 +83,38 @@ def build_openai_llm():
             if "temperature" in settings_params:
                 kwargs["temperature"] = 0.4
             settings = OpenAILLMService.Settings(**kwargs)
-            logger.info(f"OpenAI: uso sintassi Settings con params={list(kwargs.keys())}")
+            logger.info(f"OpenAI: Settings con params={list(kwargs.keys())}")
             return OpenAILLMService(api_key=api_key, settings=settings)
     except Exception as e:
-        logger.warning(f"OpenAI Settings fallita ({e}), provo sintassi legacy")
+        logger.warning(f"OpenAI Settings fallita ({e}), provo legacy")
 
-    # Fallback: sintassi vecchia
     try:
-        init_params = inspect.signature(OpenAILLMService.__init__).parameters
-        kwargs = {"api_key": api_key, "model": "gpt-4o-mini"}
-        if "params" in init_params:
-            from pipecat.services.openai import OpenAILLMService as _O
-            kwargs["params"] = _O.InputParams(max_tokens=60, temperature=0.4)
-        logger.info(f"OpenAI: uso sintassi legacy con params={list(kwargs.keys())}")
-        return OpenAILLMService(**kwargs)
+        logger.info("OpenAI: legacy minimal")
+        return OpenAILLMService(api_key=api_key, model="gpt-4o-mini")
     except Exception as e:
-        logger.error(f"OpenAI: tutte le sintassi fallite — {e}")
+        logger.error(f"OpenAI: tutto fallito — {e}")
         raise
 
 
 def build_pipeline_task(pipeline):
-    """Costruisce PipelineTask rilevando automaticamente la firma supportata."""
-    init_params = inspect.signature(PipelineTask.__init__).parameters
+    sig = inspect.signature(PipelineTask.__init__)
+    params = list(sig.parameters.keys())
+    logger.info(f"PipelineTask params rilevati: {params}")
 
-    # Versione nuova: kwargs diretti
-    if "allow_interruptions" in init_params:
-        logger.info("PipelineTask: uso sintassi kwargs diretti")
+    if "allow_interruptions" in params:
+        logger.info("PipelineTask: kwargs diretti")
         return PipelineTask(pipeline, allow_interruptions=True)
 
-    # Versione vecchia: PipelineParams come secondo argomento
-    try:
-        from pipecat.pipeline.task import PipelineParams
-        logger.info("PipelineTask: uso sintassi PipelineParams")
-        return PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
-    except ImportError:
-        logger.info("PipelineTask: uso sintassi minimale")
-        return PipelineTask(pipeline)
+    if "params" in params:
+        try:
+            from pipecat.pipeline.task import PipelineParams
+            logger.info("PipelineTask: PipelineParams")
+            return PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
+        except Exception as e:
+            logger.warning(f"PipelineParams fallito: {e}")
+
+    logger.info("PipelineTask: solo pipeline")
+    return PipelineTask(pipeline)
 
 
 @app.get("/health")
@@ -167,10 +156,8 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close()
         return
 
-    # ── VAD ───────────────────────────────────────────────────────────────────
     vad = SileroVADAnalyzer(params=VADParams(stop_secs=0.4))
 
-    # ── Transport ─────────────────────────────────────────────────────────────
     transport = FastAPIWebsocketTransport(
         websocket,
         FastAPIWebsocketParams(
@@ -186,7 +173,6 @@ async def websocket_endpoint(websocket: WebSocket):
         ),
     )
 
-    # ── STT ───────────────────────────────────────────────────────────────────
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         model="nova-2-phonecall",
@@ -194,15 +180,12 @@ async def websocket_endpoint(websocket: WebSocket):
         extra={"endpointing": 200, "utterance_end_ms": 1000},
     )
 
-    # ── TTS e LLM costruiti in modo difensivo ─────────────────────────────────
     tts = build_cartesia_tts()
     llm = build_openai_llm()
 
-    # ── Contesto ──────────────────────────────────────────────────────────────
     context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
     user_agg, assistant_agg = LLMContextAggregatorPair(context)
 
-    # ── Pipeline ──────────────────────────────────────────────────────────────
     pipeline = Pipeline([
         transport.input(),
         stt,
@@ -213,7 +196,6 @@ async def websocket_endpoint(websocket: WebSocket):
         assistant_agg,
     ])
 
-    # ── Task costruito in modo difensivo ──────────────────────────────────────
     task = build_pipeline_task(pipeline)
 
     @transport.event_handler("on_client_connected")
