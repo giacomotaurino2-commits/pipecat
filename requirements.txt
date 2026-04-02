@@ -1,5 +1,4 @@
 pipecat-ai[twilio,deepgram,cartesia,openai]==0.0.108
-aiohttp
 uvicorn
 fastapi
 python-dotenv
