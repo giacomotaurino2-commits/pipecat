@@ -41,15 +41,20 @@ GREETING = "Buongiorno, Rojak. Giulia al telefono, come posso aiutarla?"
 def build_cartesia_tts():
     api_key = os.getenv("CARTESIA_API_KEY")
     voice_id = "36d94908-c5b9-4014-b521-e69aee5bead0"
-    model = "sonic-multilingual"
 
+    # sonic-multilingual con language causa il bug dei timestamps.
+    # Usiamo sonic-2 senza language: la voce italiana è già nativa nel voice_id.
     try:
         if hasattr(CartesiaTTSService, "Settings"):
             settings_params = inspect.signature(CartesiaTTSService.Settings.__init__).parameters
-            kwargs = {"voice": voice_id, "model": model}
-            if "language" in settings_params:
-                kwargs["language"] = "it"
-            settings = CartesiaTTSService.Settings(**kwargs)
+            kwargs = {
+                "voice": voice_id,
+                "model": "sonic-2",   # sonic-2 non forza timestamps
+            }
+            # NON passiamo language per evitare il bug timestamps
+            settings = CartesiaTTSService.Settings(**{
+                k: v for k, v in kwargs.items() if k in settings_params
+            })
             logger.info(f"Cartesia: Settings con params={list(kwargs.keys())}")
             return CartesiaTTSService(api_key=api_key, settings=settings)
     except Exception as e:
@@ -59,11 +64,9 @@ def build_cartesia_tts():
         init_params = inspect.signature(CartesiaTTSService.__init__).parameters
         kwargs = {"api_key": api_key, "voice_id": voice_id}
         if "model_id" in init_params:
-            kwargs["model_id"] = model
+            kwargs["model_id"] = "sonic-2"
         elif "model" in init_params:
-            kwargs["model"] = model
-        if "language" in init_params:
-            kwargs["language"] = "it"
+            kwargs["model"] = "sonic-2"
         logger.info(f"Cartesia: legacy con params={list(kwargs.keys())}")
         return CartesiaTTSService(**kwargs)
     except Exception as e:
@@ -82,7 +85,9 @@ def build_openai_llm():
                 kwargs["max_tokens"] = 60
             if "temperature" in settings_params:
                 kwargs["temperature"] = 0.4
-            settings = OpenAILLMService.Settings(**kwargs)
+            settings = OpenAILLMService.Settings(**{
+                k: v for k, v in kwargs.items() if k in settings_params
+            })
             logger.info(f"OpenAI: Settings con params={list(kwargs.keys())}")
             return OpenAILLMService(api_key=api_key, settings=settings)
     except Exception as e:
@@ -108,8 +113,9 @@ def build_pipeline_task(pipeline):
     if "params" in params:
         try:
             from pipecat.pipeline.task import PipelineParams
-            logger.info("PipelineTask: PipelineParams")
-            return PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
+            # Proviamo con keyword argument invece che posizionale
+            logger.info("PipelineTask: PipelineParams come kwarg")
+            return PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
         except Exception as e:
             logger.warning(f"PipelineParams fallito: {e}")
 
@@ -156,7 +162,8 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close()
         return
 
-    vad = SileroVADAnalyzer(params=VADParams(stop_secs=0.4))
+    # VAD: torniamo a 0.2s come raccomandato dai warning nel log
+    vad = SileroVADAnalyzer(params=VADParams(stop_secs=0.2))
 
     transport = FastAPIWebsocketTransport(
         websocket,
