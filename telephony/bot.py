@@ -1,5 +1,6 @@
 import os
 import json
+import inspect
 import uvicorn
 from loguru import logger
 from dotenv import load_dotenv
@@ -36,9 +37,101 @@ Sei professionale, rapida e diretta. Regole TASSATIVE:
 
 GREETING = "Buongiorno, Rojak. Giulia al telefono, come posso aiutarla?"
 
+
+def build_cartesia_tts():
+    """Costruisce CartesiaTTSService rilevando automaticamente la sintassi supportata."""
+    api_key = os.getenv("CARTESIA_API_KEY")
+    voice_id = "36d94908-c5b9-4014-b521-e69aee5bead0"
+    model = "sonic-multilingual"
+
+    # Prova prima la sintassi nuova con Settings
+    try:
+        if hasattr(CartesiaTTSService, "Settings"):
+            settings_params = inspect.signature(CartesiaTTSService.Settings.__init__).parameters
+            kwargs = {"voice": voice_id, "model": model}
+            if "language" in settings_params:
+                kwargs["language"] = "it"
+            if "speed" in settings_params:
+                kwargs["speed"] = "normal"
+            settings = CartesiaTTSService.Settings(**kwargs)
+            logger.info(f"Cartesia: uso sintassi Settings con params={list(kwargs.keys())}")
+            return CartesiaTTSService(api_key=api_key, settings=settings)
+    except Exception as e:
+        logger.warning(f"Cartesia Settings fallita ({e}), provo sintassi legacy")
+
+    # Fallback: sintassi vecchia con parametri diretti
+    try:
+        init_params = inspect.signature(CartesiaTTSService.__init__).parameters
+        kwargs = {"api_key": api_key, "voice_id": voice_id}
+        if "model_id" in init_params:
+            kwargs["model_id"] = model
+        elif "model" in init_params:
+            kwargs["model"] = model
+        if "language" in init_params:
+            kwargs["language"] = "it"
+        logger.info(f"Cartesia: uso sintassi legacy con params={list(kwargs.keys())}")
+        return CartesiaTTSService(**kwargs)
+    except Exception as e:
+        logger.error(f"Cartesia: tutte le sintassi fallite — {e}")
+        raise
+
+
+def build_openai_llm():
+    """Costruisce OpenAILLMService rilevando automaticamente la sintassi supportata."""
+    api_key = os.getenv("OPENAI_API_KEY")
+
+    # Prova prima la sintassi nuova con Settings
+    try:
+        if hasattr(OpenAILLMService, "Settings"):
+            settings_params = inspect.signature(OpenAILLMService.Settings.__init__).parameters
+            kwargs = {"model": "gpt-4o-mini"}
+            if "max_tokens" in settings_params:
+                kwargs["max_tokens"] = 60
+            if "temperature" in settings_params:
+                kwargs["temperature"] = 0.4
+            settings = OpenAILLMService.Settings(**kwargs)
+            logger.info(f"OpenAI: uso sintassi Settings con params={list(kwargs.keys())}")
+            return OpenAILLMService(api_key=api_key, settings=settings)
+    except Exception as e:
+        logger.warning(f"OpenAI Settings fallita ({e}), provo sintassi legacy")
+
+    # Fallback: sintassi vecchia
+    try:
+        init_params = inspect.signature(OpenAILLMService.__init__).parameters
+        kwargs = {"api_key": api_key, "model": "gpt-4o-mini"}
+        if "params" in init_params:
+            from pipecat.services.openai import OpenAILLMService as _O
+            kwargs["params"] = _O.InputParams(max_tokens=60, temperature=0.4)
+        logger.info(f"OpenAI: uso sintassi legacy con params={list(kwargs.keys())}")
+        return OpenAILLMService(**kwargs)
+    except Exception as e:
+        logger.error(f"OpenAI: tutte le sintassi fallite — {e}")
+        raise
+
+
+def build_pipeline_task(pipeline):
+    """Costruisce PipelineTask rilevando automaticamente la firma supportata."""
+    init_params = inspect.signature(PipelineTask.__init__).parameters
+
+    # Versione nuova: kwargs diretti
+    if "allow_interruptions" in init_params:
+        logger.info("PipelineTask: uso sintassi kwargs diretti")
+        return PipelineTask(pipeline, allow_interruptions=True)
+
+    # Versione vecchia: PipelineParams come secondo argomento
+    try:
+        from pipecat.pipeline.task import PipelineParams
+        logger.info("PipelineTask: uso sintassi PipelineParams")
+        return PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
+    except ImportError:
+        logger.info("PipelineTask: uso sintassi minimale")
+        return PipelineTask(pipeline)
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
 
 @app.post("/twilio")
 async def twilio_webhook(request: Request):
@@ -50,6 +143,7 @@ async def twilio_webhook(request: Request):
         "</Connect></Response>"
     )
     return Response(content=twiml, media_type="text/xml")
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -100,26 +194,9 @@ async def websocket_endpoint(websocket: WebSocket):
         extra={"endpointing": 200, "utterance_end_ms": 1000},
     )
 
-    # ── TTS — nuova sintassi Settings ─────────────────────────────────────────
-    tts = CartesiaTTSService(
-        api_key=os.getenv("CARTESIA_API_KEY"),
-        settings=CartesiaTTSService.Settings(
-            voice="36d94908-c5b9-4014-b521-e69aee5bead0",
-            model="sonic-multilingual",
-            language="it",
-            speed="normal",
-        ),
-    )
-
-    # ── LLM — nuova sintassi Settings ─────────────────────────────────────────
-    llm = OpenAILLMService(
-        api_key=os.getenv("OPENAI_API_KEY"),
-        settings=OpenAILLMService.Settings(
-            model="gpt-4o-mini",
-            max_tokens=60,
-            temperature=0.4,
-        ),
-    )
+    # ── TTS e LLM costruiti in modo difensivo ─────────────────────────────────
+    tts = build_cartesia_tts()
+    llm = build_openai_llm()
 
     # ── Contesto ──────────────────────────────────────────────────────────────
     context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
@@ -136,13 +213,8 @@ async def websocket_endpoint(websocket: WebSocket):
         assistant_agg,
     ])
 
-    # ── FIX PRINCIPALE: PipelineTask ora accetta solo il pipeline ─────────────
-    # I parametri vanno passati come kwargs, non come oggetto PipelineParams
-    task = PipelineTask(
-        pipeline,
-        allow_interruptions=True,
-        enable_metrics=True,
-    )
+    # ── Task costruito in modo difensivo ──────────────────────────────────────
+    task = build_pipeline_task(pipeline)
 
     @transport.event_handler("on_client_connected")
     async def on_connected(t, c):
@@ -157,6 +229,7 @@ async def websocket_endpoint(websocket: WebSocket):
     runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
     logger.info(f"Sessione terminata | stream={stream_sid}")
+
 
 if __name__ == "__main__":
     uvicorn.run(
