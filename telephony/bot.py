@@ -67,14 +67,14 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # 1. ORCHESTRAZIONE DEL VAD (ORECCHIE BLINDATE)
-    # Ignora i fruscii, aspetta 0.8 secondi (800ms) di silenzio prima di risponderti,
-    # permettendoti di fare pause naturali senza che il bot ti tagli la parola.
+    # VAD BLINDATO: Standard Pipecat (0.2s) ma con min_volume a 0.5.
+    # Questo significa che ignorerà TOTALMENTE respiri, fruscii di linea e rumori di fondo.
+    # Ascolterà solo quando parli con un tono di voce chiaro.
     silero_vad = SileroVADAnalyzer(params=VADParams(
-        confidence=0.75,     # Ignora rumori sospetti (0.5 è troppo sensibile)
-        start_secs=0.2,      # Parte veloce quando parli
-        stop_secs=0.8,       # TI LASCIA FINIRE DI PARLARE prima di elaborare
-        min_volume=0.3       # Filtra il respiro e il rumore bianco della linea
+        confidence=0.75,     
+        start_secs=0.2,      
+        stop_secs=0.2,       
+        min_volume=0.5       
     ))
 
     transport = FastAPIWebsocketTransport(
@@ -94,6 +94,7 @@ async def run_bot(websocket: WebSocket):
         ),
     )
 
+    # Deepgram ottimizzato in italiano
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         model="nova-2",
@@ -106,33 +107,32 @@ async def run_bot(websocket: WebSocket):
         language="it"
     )
     
-    # 2. ORCHESTRAZIONE DEL CERVELLO (IL CECCHINO)
-    # Impostiamo temperature a 0.2: zero creatività inutile, massima obbedienza al prompt.
+    # LLM impostato su gpt-4o: L'intelligenza massima disponibile per la latenza in tempo reale.
+    # Temperature 0.3: Abbastanza basso da non fargli inventare nulla, ma con un pizzico di naturalezza.
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
             model="gpt-4o",
-            temperature=0.2, 
+            temperature=0.3, 
         )
     )
 
-    # 3. KNOWLEDGE BASE RINFORZATA (PROMPT CORAZZATO)
-    # Salviamo le regole direttamente nel codice così non dipendiamo da Railway.
-    system_prompt = """SEI L'ASSISTENTE VOCALE UFFICIALE DI ROJAK, software house d'avanguardia. 
-    Il tuo tono è professionale, naturale, dinamico e orientato alla soluzione.
+    # PROMPT AVANZATO: Istruzioni di ferro per prevenire divagazioni e stupidità.
+    system_prompt = """SEI L'ASSISTENTE VOCALE UFFICIALE DI ROJAK, una software house d'avanguardia. 
+    Il tuo compito è rispondere al telefono in modo brillante, professionale ed estremamente rapido.
     
-    REGOLE VOCALI TASSATIVE:
-    1. FORMATO: Scrivi SOLO testo semplice. MAI elenchi puntati, MAI asterischi, MAI markdown.
-    2. BREVITÀ: Rispondi SEMPRE con massimo due frasi. Non fare MAI monologhi. 
-    3. NUMERI: Scrivi i numeri in lettere (es. "quindici", "cento").
-    4. GESTIONE: Chiudi ogni tua risposta con una breve domanda per guidare l'utente.
+    REGOLE TASSATIVE (VIOLARLE È PROIBITO):
+    1. ZERO FORMATTAZIONE: Non usare mai asterischi, cancelletti, markdown o liste. Scrivi tutto come se fosse un copione da leggere a voce.
+    2. BREVITÀ ESTREMA: Le tue risposte devono essere di una o due frasi al massimo. Sii conciso.
+    3. NO ALLUCINAZIONI: Se l'utente fa una domanda a cui non sai rispondere, o se capisci una frase senza senso (es. un fruscio), di' semplicemente: "Mi scusi, non ho sentito bene. Può ripetere?".
+    4. IL TUO OBIETTIVO: L'unico tuo scopo è fissare una "Discovery Call" (una chiamata conoscitiva) di 15 minuti con un esperto del team.
     
-    COSA FA ROJAK: Soluzioni AI (agenti intelligenti e automazioni), CRM su misura, Siti Web e Web App scalabili, Software Custom.
+    CONOSCENZA DI ROJAK: 
+    - Sviluppiamo soluzioni AI (agenti intelligenti), CRM su misura e Software Custom.
+    - I prezzi sono personalizzati e vengono discussi solo in call.
     
-    OBIETTIVO: Fissare una Discovery Call di quindici minuti.
-    Se chiedono il costo, rispondi che è su misura e proponi la call.
-    Se chiedono i servizi, citane due al massimo e proponi la call.
-    Se accettano, chiedi nome e email per confermare."""
+    STRUTTURA DELLA TUA RISPOSTA:
+    Rispondi sempre direttamente alla domanda e chiudi immediatamente con una domanda per spingere verso la prenotazione (es. "Vuole che le fissi una chiamata con un nostro esperto?")."""
 
     messages = [
         {
