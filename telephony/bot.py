@@ -102,10 +102,10 @@ async def run_bot(websocket: WebSocket):
         language="it"
     )
     
-    # OpenAI aggiornato a GPT-5.1
+    # OpenAI ritornato a GPT-4o (stabile) per evitare il blocco infinito
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-5.1",
+        model="gpt-4o",
     )
 
     messages = [
