@@ -1,5 +1,8 @@
-pipecat-ai[twilio,deepgram,cartesia,openai]==0.0.108
-uvicorn
-fastapi
-python-dotenv
-loguru
+fastapi==0.111.0
+uvicorn==0.30.1
+python-dotenv==1.0.1
+loguru==0.7.2
+pipecat-ai[openai,twilio,silero]==0.0.45
+websockets==12.0
+aiohttp==3.9.5
+pydantic==2.7.4
