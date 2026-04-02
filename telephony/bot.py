@@ -2,7 +2,9 @@ import asyncio
 import os
 import sys
 
-from pipecat.transports.services.daily import DailyParams, DailyTransport, DailyRestHelper
+# Nuovi percorsi per la versione 0.0.108
+from pipecat.transports.daily.transport import DailyTransport, DailyParams
+from pipecat.transports.services.daily import DailyRestHelper
 from pipecat.services.openai import OpenAILLMService
 from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService
