@@ -40,7 +40,7 @@ GREETING = "Buongiorno, Rojak. Giulia al telefono, come posso aiutarla?"
 
 def build_cartesia_tts():
     api_key = os.getenv("CARTESIA_API_KEY")
-    voice_id = "36d94908-c5b9-4014-b521-e69aee5bead0"
+    voice_id = "ee16f140-f6dc-490e-a1ed-c1d537ea0086"
 
     # sonic-multilingual con language causa il bug dei timestamps.
     # Usiamo sonic-2 senza language: la voce italiana è già nativa nel voice_id.
