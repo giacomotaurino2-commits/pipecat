@@ -16,23 +16,25 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+
+# --- NUOVI IMPORT PER PIPECAT 0.0.108 ---
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.frames.frames import LLMMessagesFrame, TextFrame
+
 from pipecat.services.openai import OpenAILLMService
 from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService
-from pipecat.frames.frames import LLMMessagesFrame, TextFrame
 
 load_dotenv(override=True)
 
 # Inizializza il server web
 app = FastAPI()
 
-# 1. Quando Twilio chiama il tuo link, entra qui
 @app.post("/twilio")
 async def twilio_webhook(request: Request):
     logger.info("Chiamata in arrivo da Twilio...")
     host = request.headers.get("host", "")
-    # Diciamo a Twilio di collegarsi al nostro WebSocket sicuro
     ws_url = f"wss://{host}/ws"
     
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -43,13 +45,11 @@ async def twilio_webhook(request: Request):
     </Response>"""
     return Response(content=twiml, media_type="text/xml")
 
-# 2. Twilio si collega al WebSocket ed entra qui
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     await run_bot(websocket)
 
-# 3. Il TUO codice originale che gestisce l'AI
 async def run_bot(websocket: WebSocket):
     stream_sid = None
     call_sid = None
@@ -59,17 +59,14 @@ async def run_bot(websocket: WebSocket):
         event = msg.get("event")
 
         if event == "connected":
-            logger.info("Twilio: connected")
             continue
 
         if event == "start":
             stream_sid = msg["start"]["streamSid"]
             call_sid = msg["start"]["callSid"]
-            logger.info(f"Twilio stream avviato — stream_sid={stream_sid}, call_sid={call_sid}")
             break
 
     if not stream_sid:
-        logger.error("Nessun stream_sid ricevuto, chiusura.")
         return
 
     transport = FastAPIWebsocketTransport(
@@ -89,20 +86,17 @@ async def run_bot(websocket: WebSocket):
         ),
     )
 
-    # Deepgram configurato in ITALIANO
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         language="it"
     )
     
-    # Cartesia con la voce di Lorenzo configurato in ITALIANO
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
         voice_id="ee16f140-f6dc-490e-a1ed-c1d537ea0086",
         language="it"
     )
     
-    # OpenAI ritornato a GPT-4o (stabile) per evitare il blocco infinito
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         model="gpt-4o",
@@ -117,27 +111,27 @@ async def run_bot(websocket: WebSocket):
             ),
         }
     ]
-    context = OpenAILLMContext(messages)
-    context_aggregator = llm.create_context_aggregator(context)
+    
+    # --- IL NUOVO SISTEMA DI MEMORIA UNIVERSALE ---
+    context = LLMContext(messages)
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
 
     pipeline = Pipeline([
         transport.input(),
         stt,
-        context_aggregator.user(),
+        user_aggregator,
         llm,
         tts,
         transport.output(),
-        context_aggregator.assistant(),
+        assistant_aggregator,
     ])
 
     task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
 
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
-        logger.info("Bot connesso, invio messaggio di benvenuto")
-        # Passiamo le istruzioni di base
+        logger.info("Bot connesso")
         await task.queue_frames([LLMMessagesFrame(messages)])
-        # Il bot prende la parola per primo salutando il cliente
         await task.queue_frames([TextFrame("Buongiorno, grazie per aver chiamato Rojak! Sono l'assistente digitale del team. Come posso aiutarla oggi?")])
 
     @transport.event_handler("on_client_disconnected")
@@ -148,8 +142,6 @@ async def run_bot(websocket: WebSocket):
     runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
 
-# Accensione del server sulla porta 8080
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
-    logger.info(f"Avvio server sulla porta {port}...")
     uvicorn.run(app, host="0.0.0.0", port=port)
