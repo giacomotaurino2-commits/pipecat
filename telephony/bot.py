@@ -67,14 +67,14 @@ async def run_bot(websocket: WebSocket):
     if not stream_sid:
         return
 
-    # VAD BILANCIATO: 
-    # confidence=0.6 fa sì che ignori i sospiri, i fruscii e la sua stessa eco.
-    # stop_secs=0.3 ti dà il tempo di fare una piccola pausa tra una parola e l'altra.
+    # LO SCUDO ANTI-RUMORE CON RISPOSTA IMMEDIATA
+    # confidence e min_volume bloccano i rumori molesti.
+    # stop_secs a 0.2 è TASSATIVO per evitare il bug dei 30 secondi.
     silero_vad = SileroVADAnalyzer(params=VADParams(
-        confidence=0.6,     
+        confidence=0.7,     
         start_secs=0.2,      
-        stop_secs=0.3,
-        min_volume=0.1       
+        stop_secs=0.2,
+        min_volume=0.2       
     ))
 
     transport = FastAPIWebsocketTransport(
@@ -107,7 +107,6 @@ async def run_bot(websocket: WebSocket):
         )
     )
     
-    # GPT-5.1 CONFERMATO: Latenza azzerata a 2 secondi.
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
@@ -116,7 +115,6 @@ async def run_bot(websocket: WebSocket):
         )
     )
 
-    # PROMPT BLINDATO E SNELLO
     system_prompt = """SEI IL CONSULENTE TECNOLOGICO DI ROJAK.
     Rispondi sempre in modo naturale e discorsivo. NON USARE MAI elenchi o formattazioni.
     REGOLA AUREA: Sii estremamente conciso. Le tue risposte non devono MAI superare le 2 frasi.
@@ -124,7 +122,6 @@ async def run_bot(websocket: WebSocket):
     OBIETTIVO: Rispondi alla domanda del cliente in modo intelligente e proponi subito di fissare una Discovery Call di 15 minuti.
     CHI SIAMO: Sviluppiamo AI, CRM e software custom per le aziende. Prezzi su misura."""
 
-    # Pulita la memoria doppia. Ora c'è solo il system_prompt.
     messages = [
         {"role": "system", "content": os.getenv("SYSTEM_PROMPT", system_prompt)},
     ]
@@ -142,7 +139,6 @@ async def run_bot(websocket: WebSocket):
         assistant_aggregator,
     ])
 
-    # INTERRUZIONI RIATTIVATE: Ora la conversazione è viva e naturale.
     task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
 
     @transport.event_handler("on_client_connected")
